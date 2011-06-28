@@ -64,7 +64,10 @@ var (
 	ErrNoServers = os.NewError("memcache: no servers configured or available")
 )
 
-const buffered = 8 // arbitrary buffered channel size
+const (
+	buffered            = 8 // arbitrary buffered channel size, for readability
+	maxIdleConnsPerAddr = 2 // TODO(bradfitz): make this configurable?
+)
 
 // resumableError returns true if err is only a protocol-level cache error.
 // This is used to determine whether or not a server connection should
@@ -118,6 +121,9 @@ func NewFromSelector(ss ServerSelector) *Client {
 // It is safe for unlocked use by multiple concurrent goroutines.
 type Client struct {
 	selector ServerSelector
+
+	lk       sync.Mutex
+	freeconn map[net.Addr][]*conn
 }
 
 // Item is an item to be got or stored in a memcached server.
@@ -154,7 +160,7 @@ type conn struct {
 
 // release returns this connection back to the client's free pool
 func (cn *conn) release() {
-	// TODO: return to client's free pool
+	cn.c.putFreeConn(cn.addr, cn)
 }
 
 // condRelease releases this connection if the error pointed to by err
@@ -167,8 +173,40 @@ func (cn *conn) condRelease(err *os.Error) {
 	}
 }
 
+func (c *Client) putFreeConn(addr net.Addr, cn *conn) {
+	c.lk.Lock()
+	defer c.lk.Unlock()
+	if c.freeconn == nil {
+		c.freeconn = make(map[net.Addr][]*conn)
+	}
+	freelist := c.freeconn[addr]
+	if len(freelist) >= maxIdleConnsPerAddr {
+		cn.nc.Close()
+		return
+	}
+	c.freeconn[addr] = append(freelist, cn)
+}
+
+func (c *Client) getFreeConn(addr net.Addr) (cn *conn, ok bool) {
+	c.lk.Lock()
+	defer c.lk.Unlock()
+	if c.freeconn == nil {
+		return nil, false
+	}
+	freelist, ok := c.freeconn[addr]
+	if !ok || len(freelist) == 0 {
+		return nil, false
+	}
+	cn = freelist[len(freelist)-1]
+	c.freeconn[addr] = freelist[:len(freelist)-1]
+	return cn, true
+}
+
 func (c *Client) getConn(addr net.Addr) (*conn, os.Error) {
-	// TODO(bradfitz): get from a free pool
+	cn, ok := c.getFreeConn(addr)
+	if ok {
+		return cn, nil
+	}
 	nc, err := net.Dial(addr.Network(), addr.String())
 	if err != nil {
 		return nil, err
