@@ -41,6 +41,7 @@ func TestMemcache(t *testing.T) {
 	}
 	c := New(testServer)
 
+	// Set
 	foo := &Item{Key: "foo", Value: []byte("fooval"), Flags: 123}
 	if err := c.Set(foo); err != nil {
 		t.Fatalf("first set(foo): %v", err)
@@ -48,6 +49,8 @@ func TestMemcache(t *testing.T) {
 	if err := c.Set(foo); err != nil {
 		t.Fatalf("second set(foo): %v", err)
 	}
+
+	// Get
 	it, err := c.Get("foo")
 	if err != nil {
 		t.Fatalf("get(foo): %v", err)
@@ -62,6 +65,7 @@ func TestMemcache(t *testing.T) {
 		t.Errorf("get(foo) Flags = %v, want 123", it.Flags)
 	}
 
+	// Add
 	bar := &Item{Key: "bar", Value: []byte("barval")}
 	if err := c.Add(bar); err != nil {
 		t.Fatalf("first add(foo): %v", err)
@@ -70,6 +74,7 @@ func TestMemcache(t *testing.T) {
 		t.Fatalf("second add(foo) want ErrNotStored, got %v", err)
 	}
 
+	// GetMulti
 	m, err := c.GetMulti([]string{"foo", "bar"})
 	if err != nil {
 		t.Fatalf("GetMulti: %v", err)
@@ -88,6 +93,16 @@ func TestMemcache(t *testing.T) {
 	}
 	if g, e := string(m["bar"].Value), "barval"; g != e {
 		t.Errorf("GetMulti: bar: got %q, want %q", g, e)
+	}
+
+	// Delete
+	err = c.Delete("foo")
+	if err != nil {
+		t.Errorf("Delete: %v", err)
+	}
+	it, err = c.Get("foo")
+	if err != ErrCacheMiss {
+		t.Errorf("post-Delete want ErrCacheMiss, got %v", err)
 	}
 
 }
