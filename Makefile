@@ -14,7 +14,7 @@
 
 include $(GOROOT)/src/Make.inc
 
-TARG=github.com/bradfitz/go-memcache/memcache
+TARG=github.com/bradfitz/gomemcache
 GOFILES=\
 	memcache.go\
 	selector.go
