@@ -333,3 +333,11 @@ func (c *Client) populateOne(rw *bufio.ReadWriter, verb string, item *Item) os.E
 	}
 	return fmt.Errorf("memcache: unexpected response line from %q: %q", verb, string(line))
 }
+
+func (c *Client) Delete(key string) os.Error {
+	panic("noimpl")
+}
+
+func (c *Client) delete(rw *bufio.ReadWriter, item *Item) os.Error {
+	panic("noimpl")
+}
