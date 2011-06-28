@@ -41,12 +41,25 @@ func TestMemcache(t *testing.T) {
 	}
 	c := New(testServer)
 
-	foo := &Item{Key: "foo", Value: []byte("bar")}
+	foo := &Item{Key: "foo", Value: []byte("bar"), Flags: 123}
 	if err := c.Set(foo); err != nil {
 		t.Fatalf("first set(foo): %v", err)
 	}
 	if err := c.Set(foo); err != nil {
 		t.Fatalf("second set(foo): %v", err)
+	}
+	it, err := c.Get("foo")
+	if err != nil {
+		t.Fatalf("get(foo): %v", err)
+	}
+	if it.Key != "foo" {
+		t.Errorf("get(foo) Key = %q, want foo", it.Key)
+	}
+	if string(it.Value) != "bar" {
+		t.Errorf("get(foo) Value = %q, want bar", string(it.Value))
+	}
+	if it.Flags != 123 {
+		t.Errorf("get(foo) Flags = %v, want 123", it.Flags)
 	}
 
 	bar := &Item{Key: "bar", Value: []byte("bar2")}
