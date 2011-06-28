@@ -64,6 +64,9 @@ var (
 	ErrNoServers = os.NewError("memcache: no servers configured or available")
 )
 
+// DefaultTimeoutNanos is the default socket read/write timeout, in nanoseconds.
+const DefaultTimeoutNanos = 100e6 // 100 ms
+
 const (
 	buffered            = 8 // arbitrary buffered channel size, for readability
 	maxIdleConnsPerAddr = 2 // TODO(bradfitz): make this configurable?
@@ -120,6 +123,10 @@ func NewFromSelector(ss ServerSelector) *Client {
 // Client is a memcache client.
 // It is safe for unlocked use by multiple concurrent goroutines.
 type Client struct {
+	// TimeoutNanos specifies the socket read/write timeout.
+	// If zero, DefaultTimeoutNanos is used.
+	TimeoutNanos int64
+
 	selector ServerSelector
 
 	lk       sync.Mutex
@@ -211,7 +218,11 @@ func (c *Client) getConn(addr net.Addr) (*conn, os.Error) {
 	if err != nil {
 		return nil, err
 	}
-	// TODO: set read/write timeouts
+	if c.TimeoutNanos != 0 {
+		nc.SetTimeout(c.TimeoutNanos)
+	} else {
+		nc.SetTimeout(DefaultTimeoutNanos)
+	}
 	return &conn{
 		nc:   nc,
 		addr: addr,
