@@ -201,7 +201,7 @@ func (c *Client) onItem(item *Item, fn func(*Client, *bufio.ReadWriter, *Item) o
 // Get gets the item for the given key. ErrCacheMiss is returned for a
 // memcache cache miss. The key must be at most 250 bytes in length.
 func (c *Client) Get(key string) (item *Item, err os.Error) {
-	err = c.withKey(key, func(addr net.Addr) os.Error {
+	err = c.withKeyAddr(key, func(addr net.Addr) os.Error {
 		return c.getFromAddr(addr, []string{key}, func(it *Item) { item = it })
 	})
 	if err == nil && item == nil {
@@ -210,7 +210,7 @@ func (c *Client) Get(key string) (item *Item, err os.Error) {
 	return
 }
 
-func (c *Client) withKey(key string, fn func(net.Addr) os.Error) (err os.Error) {
+func (c *Client) withKeyAddr(key string, fn func(net.Addr) os.Error) (err os.Error) {
 	if !legalKey(key) {
 		return ErrMalformedKey
 	}
@@ -221,7 +221,7 @@ func (c *Client) withKey(key string, fn func(net.Addr) os.Error) (err os.Error) 
 	return fn(addr)
 }
 
-func (c *Client) withAddr(addr net.Addr, fn func(*bufio.ReadWriter) os.Error) (err os.Error) {
+func (c *Client) withAddrRw(addr net.Addr, fn func(*bufio.ReadWriter) os.Error) (err os.Error) {
 	cn, err := c.getConn(addr)
 	if err != nil {
 		return err
@@ -230,14 +230,14 @@ func (c *Client) withAddr(addr net.Addr, fn func(*bufio.ReadWriter) os.Error) (e
 	return fn(cn.rw)
 }
 
-func (c *Client) withKeyAddr(key string, fn func(*bufio.ReadWriter) os.Error) os.Error {
-	return c.withKey(key, func(addr net.Addr) os.Error {
-		return c.withAddr(addr, fn)
+func (c *Client) withKeyRw(key string, fn func(*bufio.ReadWriter) os.Error) os.Error {
+	return c.withKeyAddr(key, func(addr net.Addr) os.Error {
+		return c.withAddrRw(addr, fn)
 	})
 }
 
 func (c *Client) getFromAddr(addr net.Addr, keys []string, cb func(*Item)) os.Error {
-	return c.withAddr(addr, func(rw *bufio.ReadWriter) os.Error {
+	return c.withAddrRw(addr, func(rw *bufio.ReadWriter) os.Error {
 		if _, err := fmt.Fprintf(rw, "gets %s\r\n", strings.Join(keys, " ")); err != nil {
 			return err
 		}
@@ -427,7 +427,7 @@ func writeExpectf(rw *bufio.ReadWriter, expect []byte, format string, args ...in
 }
 
 func (c *Client) Delete(key string) os.Error {
-	return c.withKeyAddr(key, func(rw *bufio.ReadWriter) os.Error {
+	return c.withKeyRw(key, func(rw *bufio.ReadWriter) os.Error {
 		return writeExpectf(rw, resultDeleted, "delete %s\r\n", key)
 	})
 }
