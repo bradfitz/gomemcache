@@ -96,7 +96,8 @@ var (
 	resultNotStored = []byte("NOT_STORED\r\n")
 	resultExists    = []byte("EXISTS\r\n")
 	resultNotFound  = []byte("NOT_FOUND\r\n")
-	end             = []byte("END\r\n")
+	resultDeleted   = []byte("DELETED\r\n")
+	resultEnd       = []byte("END\r\n")
 )
 
 // New returns a memcache client using the provided server(s)
@@ -200,37 +201,54 @@ func (c *Client) onItem(item *Item, fn func(*Client, *bufio.ReadWriter, *Item) o
 // Get gets the item for the given key. ErrCacheMiss is returned for a
 // memcache cache miss. The key must be at most 250 bytes in length.
 func (c *Client) Get(key string) (item *Item, err os.Error) {
-	if !legalKey(key) {
-		return nil, ErrMalformedKey
-	}
-	addr, err := c.selector.PickServer(key)
-	if err != nil {
-		return nil, err
-	}
-	err = c.getFromAddr(addr, []string{key}, func(it *Item) { item = it })
+	err = c.withKey(key, func(addr net.Addr) os.Error {
+		return c.getFromAddr(addr, []string{key}, func(it *Item) { item = it })
+	})
 	if err == nil && item == nil {
 		err = ErrCacheMiss
 	}
 	return
 }
 
-func (c *Client) getFromAddr(addr net.Addr, keys []string, cb func(*Item)) os.Error {
+func (c *Client) withKey(key string, fn func(net.Addr) os.Error) (err os.Error) {
+	if !legalKey(key) {
+		return ErrMalformedKey
+	}
+	addr, err := c.selector.PickServer(key)
+	if err != nil {
+		return err
+	}
+	return fn(addr)
+}
+
+func (c *Client) withAddr(addr net.Addr, fn func(*bufio.ReadWriter) os.Error) (err os.Error) {
 	cn, err := c.getConn(addr)
 	if err != nil {
 		return err
 	}
 	defer cn.condRelease(&err)
+	return fn(cn.rw)
+}
 
-	if _, err = fmt.Fprintf(cn.rw, "gets %s\r\n", strings.Join(keys, " ")); err != nil {
-		return err
-	}
-	if err = cn.rw.Flush(); err != nil {
-		return err
-	}
-	if err = parseGetResponse(cn.rw.Reader, cb); err != nil {
-		return err
-	}
-	return nil
+func (c *Client) withKeyAddr(key string, fn func(*bufio.ReadWriter) os.Error) os.Error {
+	return c.withKey(key, func(addr net.Addr) os.Error {
+		return c.withAddr(addr, fn)
+	})
+}
+
+func (c *Client) getFromAddr(addr net.Addr, keys []string, cb func(*Item)) os.Error {
+	return c.withAddr(addr, func(rw *bufio.ReadWriter) os.Error {
+		if _, err := fmt.Fprintf(rw, "gets %s\r\n", strings.Join(keys, " ")); err != nil {
+			return err
+		}
+		if err := rw.Flush(); err != nil {
+			return err
+		}
+		if err := parseGetResponse(rw.Reader, cb); err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
 // GetMulti is a batch version of Get. The returned map from keys to
@@ -282,7 +300,7 @@ func parseGetResponse(r *bufio.Reader, cb func(*Item)) os.Error {
 		if err != nil {
 			return err
 		}
-		if bytes.Equal(line, end) {
+		if bytes.Equal(line, resultEnd) {
 			return nil
 		}
 		it := new(Item)
@@ -342,7 +360,6 @@ func (c *Client) cas(rw *bufio.ReadWriter, item *Item) os.Error {
 	return c.populateOne(rw, "cas", item)
 }
 
-
 func (c *Client) populateOne(rw *bufio.ReadWriter, verb string, item *Item) os.Error {
 	if !legalKey(item.Key) {
 		return ErrMalformedKey
@@ -384,10 +401,33 @@ func (c *Client) populateOne(rw *bufio.ReadWriter, verb string, item *Item) os.E
 	return fmt.Errorf("memcache: unexpected response line from %q: %q", verb, string(line))
 }
 
-func (c *Client) Delete(key string) os.Error {
-	panic("noimpl")
+func writeExpectf(rw *bufio.ReadWriter, expect []byte, format string, args ...interface{}) os.Error {
+	_, err := fmt.Fprintf(rw, format, args...)
+	if err != nil {
+		return err
+	}
+	if err := rw.Flush(); err != nil {
+		return err
+	}
+	line, err := rw.ReadSlice('\n')
+	if err != nil {
+		return err
+	}
+	switch {
+	case bytes.Equal(line, expect):
+		return nil
+	case bytes.Equal(line, resultNotStored):
+		return ErrNotStored
+	case bytes.Equal(line, resultExists):
+		return ErrCASConflict
+	case bytes.Equal(line, resultNotFound):
+		return ErrCacheMiss
+	}
+	return fmt.Errorf("memcache: unexpected response line: %q", string(line))
 }
 
-func (c *Client) delete(rw *bufio.ReadWriter, item *Item) os.Error {
-	panic("noimpl")
+func (c *Client) Delete(key string) os.Error {
+	return c.withKeyAddr(key, func(rw *bufio.ReadWriter) os.Error {
+		return writeExpectf(rw, resultDeleted, "delete %s\r\n", key)
+	})
 }
