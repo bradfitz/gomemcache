@@ -41,7 +41,7 @@ func TestMemcache(t *testing.T) {
 	}
 	c := New(testServer)
 
-	foo := &Item{Key: "foo", Value: []byte("bar"), Flags: 123}
+	foo := &Item{Key: "foo", Value: []byte("fooval"), Flags: 123}
 	if err := c.Set(foo); err != nil {
 		t.Fatalf("first set(foo): %v", err)
 	}
@@ -55,19 +55,39 @@ func TestMemcache(t *testing.T) {
 	if it.Key != "foo" {
 		t.Errorf("get(foo) Key = %q, want foo", it.Key)
 	}
-	if string(it.Value) != "bar" {
-		t.Errorf("get(foo) Value = %q, want bar", string(it.Value))
+	if string(it.Value) != "fooval" {
+		t.Errorf("get(foo) Value = %q, want fooval", string(it.Value))
 	}
 	if it.Flags != 123 {
 		t.Errorf("get(foo) Flags = %v, want 123", it.Flags)
 	}
 
-	bar := &Item{Key: "bar", Value: []byte("bar2")}
+	bar := &Item{Key: "bar", Value: []byte("barval")}
 	if err := c.Add(bar); err != nil {
 		t.Fatalf("first add(foo): %v", err)
 	}
 	if err := c.Add(bar); err != ErrNotStored {
 		t.Fatalf("second add(foo) want ErrNotStored, got %v", err)
+	}
+
+	m, err := c.GetMulti([]string{"foo", "bar"})
+	if err != nil {
+		t.Fatalf("GetMulti: %v", err)
+	}
+	if g, e := len(m), 2; g != e {
+		t.Errorf("GetMulti: got len(map) = %d, want = %d", g, e)
+	}
+	if _, ok := m["foo"]; !ok {
+		t.Fatalf("GetMulti: didn't get key 'foo'")
+	}
+	if _, ok := m["bar"]; !ok {
+		t.Fatalf("GetMulti: didn't get key 'bar'")
+	}
+	if g, e := string(m["foo"].Value), "fooval"; g != e {
+		t.Errorf("GetMulti: foo: got %q, want %q", g, e)
+	}
+	if g, e := string(m["bar"].Value), "barval"; g != e {
+		t.Errorf("GetMulti: bar: got %q, want %q", g, e)
 	}
 
 }

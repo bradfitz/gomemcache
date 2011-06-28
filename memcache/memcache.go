@@ -24,8 +24,10 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
-	"os"
 	"net"
+	"os"
+	"strings"
+	"sync"
 )
 
 var _ = log.Printf
@@ -61,6 +63,8 @@ var (
 	// ErrNoServers is returned when no servers are configured or available.
 	ErrNoServers = os.NewError("memcache: no servers configured or available")
 )
+
+const buffered = 8 // arbitrary buffered channel size
 
 // resumableError returns true if err is only a protocol-level cache error.
 // This is used to determine whether or not a server connection should
@@ -203,25 +207,71 @@ func (c *Client) Get(key string) (item *Item, err os.Error) {
 	if err != nil {
 		return nil, err
 	}
-	cn, err := c.getConn(addr)
-	if err != nil {
-		return nil, err
-	}
-	defer cn.condRelease(&err)
-
-	if _, err = fmt.Fprintf(cn.rw, "gets %s\r\n", key); err != nil {
-		return
-	}
-	if err = cn.rw.Flush(); err != nil {
-		return
-	}
-	if err = parseGetResponse(cn.rw.Reader, func(it *Item) { item = it }); err != nil {
-		return
-	}
-	if item == nil {
+	err = c.getFromAddr(addr, []string{key}, func(it *Item) { item = it })
+	if err == nil && item == nil {
 		err = ErrCacheMiss
 	}
 	return
+}
+
+func (c *Client) getFromAddr(addr net.Addr, keys []string, cb func(*Item)) os.Error {
+	cn, err := c.getConn(addr)
+	if err != nil {
+		return err
+	}
+	defer cn.condRelease(&err)
+
+	if _, err = fmt.Fprintf(cn.rw, "gets %s\r\n", strings.Join(keys, " ")); err != nil {
+		return err
+	}
+	if err = cn.rw.Flush(); err != nil {
+		return err
+	}
+	if err = parseGetResponse(cn.rw.Reader, cb); err != nil {
+		return err
+	}
+	return nil
+}
+
+// GetMulti is a batch version of Get. The returned map from keys to
+// items may have fewer elements than the input slice, due to memcache
+// cache misses. Each key must be at most 250 bytes in length.
+// If no error is returned, the returned map will also be non-nil.
+func (c *Client) GetMulti(keys []string) (map[string]*Item, os.Error) {
+	var lk sync.Mutex
+	m := make(map[string]*Item)
+	addItemToMap := func(it *Item) {
+		lk.Lock()
+		defer lk.Unlock()
+		m[it.Key] = it
+	}
+
+	keyMap := make(map[net.Addr][]string)
+	for _, key := range keys {
+		if !legalKey(key) {
+			return nil, ErrMalformedKey
+		}
+		addr, err := c.selector.PickServer(key)
+		if err != nil {
+			return nil, err
+		}
+		keyMap[addr] = append(keyMap[addr], key)
+	}
+
+	ch := make(chan os.Error, buffered)
+	for addr, keys := range keyMap {
+		go func(addr net.Addr, keys []string) {
+			ch <- c.getFromAddr(addr, keys, addItemToMap)
+		}(addr, keys)
+	}
+
+	var err os.Error
+	for _ = range keyMap {
+		if ge := <-ch; ge != nil {
+			err = ge
+		}
+	}
+	return m, err
 }
 
 // parseGetResponse reads a GET response from r and calls cb for each
