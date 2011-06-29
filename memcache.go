@@ -23,15 +23,12 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"log"
 	"net"
 	"os"
 	"strings"
 	"sync"
 	"time"
 )
-
-var _ = log.Printf
 
 // Similar to:
 // http://code.google.com/appengine/docs/go/memcache/reference.html
@@ -519,15 +516,7 @@ func writeExpectf(rw *bufio.ReadWriter, expect []byte, format string, args ...in
 // Delete deletes the item with the provided key. The error ErrCacheMiss is
 // returned if the item didn't already exist in the cache.
 func (c *Client) Delete(key string) os.Error {
-	return c.DeleteLock(key, 0)
-}
-
-// Delete deletes the item with the provided key, also instructing the
-// server to not permit an "add" or "replace" commands to work on the
-// key for the given duration (in seconds). The error ErrCacheMiss is
-// returned if the item didn't already exist in the cache.
-func (c *Client) DeleteLock(key string, seconds int) os.Error {
 	return c.withKeyRw(key, func(rw *bufio.ReadWriter) os.Error {
-		return writeExpectf(rw, resultDeleted, "delete %s %d\r\n", key, seconds)
+		return writeExpectf(rw, resultDeleted, "delete %s\r\n", key)
 	})
 }
