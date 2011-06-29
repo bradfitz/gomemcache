@@ -145,8 +145,8 @@ type Item struct {
 	// Object is the Item's value for use with a Codec.
 	Object interface{}
 
-	// Flags are server-opaque flags whose semantics are entirely up to the
-	// App Engine app.
+	// Flags are server-opaque flags whose semantics are entirely
+	// up to the app.
 	Flags uint32
 
 	// Expiration is the cache expiration time, in seconds: either a relative
