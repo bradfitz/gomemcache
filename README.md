@@ -37,7 +37,7 @@ You can use `goinstall -u -a` for update all installed packages.
 
 ## Full docs, see:
 
-See https://github.com/bradfitz/gomemcache/blob/master/godoc.md
+See http://gopkgdoc.appspot.com/pkg/github.com/bradfitz/gomemcache
 
 Or run:
 
