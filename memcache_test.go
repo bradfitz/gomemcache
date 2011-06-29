@@ -19,6 +19,8 @@ package memcache
 
 import (
 	"net"
+	"os"
+	"strings"
 	"testing"
 )
 
@@ -39,22 +41,30 @@ func TestMemcache(t *testing.T) {
 	if !setup(t) {
 		return
 	}
+	checkErr := func(err os.Error, format string, args ...interface{}) {
+		if err != nil {
+			t.Fatalf(format, args...)
+		}
+	}
+
 	c := New(testServer)
+
+	mustSet := func(it *Item) {
+		if err := c.Set(it); err != nil {
+			t.Fatalf("failed to Set %#v: %v", *it, err)
+		}
+	}
 
 	// Set
 	foo := &Item{Key: "foo", Value: []byte("fooval"), Flags: 123}
-	if err := c.Set(foo); err != nil {
-		t.Fatalf("first set(foo): %v", err)
-	}
-	if err := c.Set(foo); err != nil {
-		t.Fatalf("second set(foo): %v", err)
-	}
+	err := c.Set(foo)
+	checkErr(err, "first set(foo): %v", err)
+	err = c.Set(foo)
+	checkErr(err, "second set(foo): %v", err)
 
 	// Get
 	it, err := c.Get("foo")
-	if err != nil {
-		t.Fatalf("get(foo): %v", err)
-	}
+	checkErr(err, "get(foo): %v", err)
 	if it.Key != "foo" {
 		t.Errorf("get(foo) Key = %q, want foo", it.Key)
 	}
@@ -67,18 +77,15 @@ func TestMemcache(t *testing.T) {
 
 	// Add
 	bar := &Item{Key: "bar", Value: []byte("barval")}
-	if err := c.Add(bar); err != nil {
-		t.Fatalf("first add(foo): %v", err)
-	}
+	err = c.Add(bar)
+	checkErr(err, "first add(foo): %v", err)
 	if err := c.Add(bar); err != ErrNotStored {
 		t.Fatalf("second add(foo) want ErrNotStored, got %v", err)
 	}
 
 	// GetMulti
 	m, err := c.GetMulti([]string{"foo", "bar"})
-	if err != nil {
-		t.Fatalf("GetMulti: %v", err)
-	}
+	checkErr(err, "GetMulti: %v", err)
 	if g, e := len(m), 2; g != e {
 		t.Errorf("GetMulti: got len(map) = %d, want = %d", g, e)
 	}
@@ -97,12 +104,34 @@ func TestMemcache(t *testing.T) {
 
 	// Delete
 	err = c.Delete("foo")
-	if err != nil {
-		t.Errorf("Delete: %v", err)
-	}
+	checkErr(err, "Delete: %v", err)
 	it, err = c.Get("foo")
 	if err != ErrCacheMiss {
 		t.Errorf("post-Delete want ErrCacheMiss, got %v", err)
+	}
+
+	// Incr/Decr
+	mustSet(&Item{Key: "num", Value: []byte("42")})
+	n, err := c.Increment("num", 8)
+	checkErr(err, "Increment num + 8: %v", err)
+	if n != 50 {
+		t.Fatalf("Increment num + 8: want=50, got=%d", n)
+	}
+	n, err = c.Decrement("num", 49)
+	checkErr(err, "Decrement: %v", err)
+	if n != 1 {
+		t.Fatalf("Decrement 49: want=1, got=%d", n)
+	}
+	err = c.Delete("num")
+	checkErr(err, "delete num: %v", err)
+	n, err = c.Increment("num", 1)
+	if err != ErrCacheMiss {
+		t.Fatalf("increment post-delete: want ErrCacheMiss, got %v", err)
+	}
+	mustSet(&Item{Key: "num", Value: []byte("not-numeric")})
+	n, err = c.Increment("num", 1)
+	if err == nil || !strings.Contains(err.String(), "client error") {
+		t.Fatalf("increment non-number: want client error, got %v", err)
 	}
 
 }
