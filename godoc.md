@@ -10,8 +10,6 @@ Package memcache provides a client for the memcached cache server.
 
   const DefaultTimeoutNanos = 100e6 // 100 ms
 
-
-
 ## Variables
   
   var (
@@ -49,12 +47,12 @@ Package memcache provides a client for the memcached cache server.
 Client is a memcache client.
 It is safe for unlocked use by multiple concurrent goroutines.
 
-			<p><pre>type Client struct {
-    <span class="comment">// TimeoutNanos specifies the socket read/write timeout.</span>
-    <span class="comment">// If zero, DefaultTimeoutNanos is used.</span>
+  type Client struct {
+    // TimeoutNanos specifies the socket read/write timeout.
+    // If zero, DefaultTimeoutNanos is used.
     TimeoutNanos int64
-    <span class="comment">// contains filtered or unexported fields</span>
-}</pre></p>
+    // contains filtered or unexported fields
+}
 				<h3 id="Client.New">func <a href="/src/pkg/github.com/bradfitz/gomemcache/memcache.go?s=3478:3512#L102">New</a></h3>
 				<p><code>func New(server ...string) *Client</code></p>
 				<p>
@@ -69,112 +67,106 @@ it gets a proportional amount of weight.
 NewFromSelector returns a new Client using the provided ServerSelector.
 </p>
 
-				<h3 id="Client.Add">func (*Client) <a href="/src/pkg/github.com/bradfitz/gomemcache/memcache.go?s=10366:10407#L379">Add</a></h3>
-				<p><code>func (c *Client) Add(item *Item) os.Error</code></p>
-				<p>
-Add writes the given item, if no value already exists for its
-key. ErrNotStored is returned if that condition is not met.
-</p>
 
-				<h3 id="Client.CompareAndSwap">func (*Client) <a href="/src/pkg/github.com/bradfitz/gomemcache/memcache.go?s=10977:11029#L394">CompareAndSwap</a></h3>
-				<p><code>func (c *Client) CompareAndSwap(item *Item) os.Error</code></p>
-				<p>
-CompareAndSwap writes the given item that was previously returned
+#### func (*Client) Add
+
+  func (c *Client) Add(item *Item) os.Error
+  Add writes the given item, if no value already exists for its
+key. ErrNotStored is returned if that condition is not met.
+
+#### func (*Client) CompareAndSwap
+
+  func (c *Client) CompareAndSwap(item *Item) os.Error
+  CompareAndSwap writes the given item that was previously returned
 by Get, if the value was neither modified or evicted between the
-Get and the CompareAndSwap calls. The item&#39;s Key should not change
+Get and the CompareAndSwap calls. The item's Key should not change
 between calls but all other item fields may differ. ErrCASConflict
 is returned if the value was modified in between the
 calls. ErrNotStored is returned if the value was evicted in between
 the calls.
-</p>
 
-				<h3 id="Client.Delete">func (*Client) <a href="/src/pkg/github.com/bradfitz/gomemcache/memcache.go?s=13002:13046#L470">Delete</a></h3>
-				<p><code>func (c *Client) Delete(key string) os.Error</code></p>
-				<p>
-Delete deletes the item with the provided key. The error ErrCacheMiss is
-returned if the item didn&#39;t already exist in the cache.
-</p>
+#### func (*Client) Delete
 
-				<h3 id="Client.DeleteLock">func (*Client) <a href="/src/pkg/github.com/bradfitz/gomemcache/memcache.go?s=13351:13412#L478">DeleteLock</a></h3>
-				<p><code>func (c *Client) DeleteLock(key string, seconds int) os.Error</code></p>
-				<p>
-Delete deletes the item with the provided key, also instructing the
-server to not permit an &#34;add&#34; or &#34;replace&#34; commands to work on the
+  func (c *Client) Delete(key string) os.Error
+  Delete deletes the item with the provided key. The error ErrCacheMiss is
+returned if the item didn't already exist in the cache.
+
+#### func (*Client) DeleteLock
+
+  func (c *Client) DeleteLock(key string, seconds int) os.Error
+  Delete deletes the item with the provided key, also instructing the
+server to not permit an "add" or "replace" commands to work on the
 key for the given duration (in seconds). The error ErrCacheMiss is
-returned if the item didn&#39;t already exist in the cache.
-</p>
+returned if the item didn't already exist in the cache.
 
-				<h3 id="Client.Get">func (*Client) <a href="/src/pkg/github.com/bradfitz/gomemcache/memcache.go?s=6852:6911#L242">Get</a></h3>
-				<p><code>func (c *Client) Get(key string) (item *Item, err os.Error)</code></p>
-				<p>
-Get gets the item for the given key. ErrCacheMiss is returned for a
+#### func (*Client) Get
+
+  func (c *Client) Get(key string) (item *Item, err os.Error)
+  Get gets the item for the given key. ErrCacheMiss is returned for a
 memcache cache miss. The key must be at most 250 bytes in length.
-</p>
 
-				<h3 id="Client.GetMulti">func (*Client) <a href="/src/pkg/github.com/bradfitz/gomemcache/memcache.go?s=8411:8480#L297">GetMulti</a></h3>
-				<p><code>func (c *Client) GetMulti(keys []string) (map[string]*Item, os.Error)</code></p>
-				<p>
-GetMulti is a batch version of Get. The returned map from keys to
+#### func (*Client) GetMulti
+
+  func (c *Client) GetMulti(keys []string) (map[string]*Item, os.Error)
+  GetMulti is a batch version of Get. The returned map from keys to
 items may have fewer elements than the input slice, due to memcache
 cache misses. Each key must be at most 250 bytes in length.
 If no error is returned, the returned map will also be non-nil.
-</p>
 
-				<h3 id="Client.Set">func (*Client) <a href="/src/pkg/github.com/bradfitz/gomemcache/memcache.go?s=10045:10086#L369">Set</a></h3>
-				<p><code>func (c *Client) Set(item *Item) os.Error</code></p>
-				<p>
-Set writes the given item, unconditionally.
-</p>
+#### func (*Client) Set
+
+  func (c *Client) Set(item *Item) os.Error
+  Set writes the given item, unconditionally.
 
 ### type Item
 
 Item is an item to be got or stored in a memcached server.
 
-			<p><pre>type Item struct {
-    <span class="comment">// Key is the Item&#39;s key (250 bytes maximum).</span>
+  type Item struct {
+    // Key is the Item's key (250 bytes maximum).
     Key string
 
-    <span class="comment">// Value is the Item&#39;s value.</span>
+    // Value is the Item's value.
     Value []byte
 
-    <span class="comment">// Object is the Item&#39;s value for use with a Codec.</span>
+    // Object is the Item's value for use with a Codec.
     Object interface{}
 
-    <span class="comment">// Flags are server-opaque flags whose semantics are entirely up to the</span>
-    <span class="comment">// App Engine app.</span>
+    // Flags are server-opaque flags whose semantics are entirely up to the
+    // App Engine app.
     Flags uint32
 
-    <span class="comment">// Expiration is the cache expiration time, in seconds: either a relative</span>
-    <span class="comment">// time from now (up to 1 month), or an absolute Unix epoch time.</span>
-    <span class="comment">// Zero means the Item has no expiration time.</span>
+    // Expiration is the cache expiration time, in seconds: either a relative
+    // time from now (up to 1 month), or an absolute Unix epoch time.
+    // Zero means the Item has no expiration time.
     Expiration int32
-    <span class="comment">// contains filtered or unexported fields</span>
-}</pre></p>
+    // contains filtered or unexported fields
+}
+
 ### type ServerList
 
 ServerList is a simple ServerSelector. Its zero value is usable.
 
-			<p><pre>type ServerList struct {
-    <span class="comment">// contains filtered or unexported fields</span>
-}</pre></p>
-				<h3 id="ServerList.PickServer">func (*ServerList) <a href="/src/pkg/github.com/bradfitz/gomemcache/selector.go?s=1793:1858#L57">PickServer</a></h3>
-				<p><code>func (ss *ServerList) PickServer(key string) (net.Addr, os.Error)</code></p>
-				
-				<h3 id="ServerList.SetServers">func (*ServerList) <a href="/src/pkg/github.com/bradfitz/gomemcache/selector.go?s=1473:1533#L41">SetServers</a></h3>
-				<p><code>func (ss *ServerList) SetServers(servers ...string) os.Error</code></p>
-				<p>
-SetServers changes a ServerList&#39;s set of servers at runtime and is
+  type ServerList struct {
+    // contains filtered or unexported fields
+}
+
+#### func (*ServerList) PickServer
+
+  func (ss *ServerList) PickServer(key string) (net.Addr, os.Error)
+  
+#### func (*ServerList) SetServers
+
+  func (ss *ServerList) SetServers(servers ...string) os.Error
+  SetServers changes a ServerList's set of servers at runtime and is
 threadsafe.
-</p>
-<p>
+
 Each server is given equal weight. A server is given more weight
-if it&#39;s listed multiple times.
-</p>
-<p>
+if it's listed multiple times.
+
 SetServers returns an error if any of the server names fail to
 resolve. No attempt is made to connect to the server. If any error
 is returned, no changes are made to the ServerList.
-</p>
 
 ### type ServerSelector
 
@@ -183,32 +175,10 @@ as a function of the item's key.
 
 All ServerSelector implementations must be threadsafe.
 
-			<p><pre>type ServerSelector interface {
-    <span class="comment">// PickServer returns the server address that a given item</span>
-    <span class="comment">// should be shared onto.</span>
+  type ServerSelector interface {
+    // PickServer returns the server address that a given item
+    // should be shared onto.
     PickServer(key string) (net.Addr, os.Error)
-}</pre></p>
-	<p class="detail">
-	Need more packages? The
-	<a href="http://godashboard.appspot.com/package">Package Dashboard</a>
-	provides a list of <a href="/cmd/goinstall/">goinstallable</a> packages.
-	</p>
-	<h2 id="Subdirectories">Subdirectories</h2>
-	<p>
-	<table class="layout">
-	<tr>
-	<th align="left" colspan="1">Name</th>
-	<td width="25">&nbsp;</td>
-	<th align="left">Synopsis</th>
-	</tr>
-	<tr>
-	<th align="left"><a href="..">..</a></th>
-	</tr>
-		<tr>
-		
-		<td align="left" colspan="1"><a href=".git">.git</a></td>
-		<td></td>
-		<td align="left"></td>
-		</tr>
-	</table>
-	</p>
+}
+
+
