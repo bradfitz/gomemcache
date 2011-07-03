@@ -23,15 +23,13 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"log"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
-
-var _ = log.Printf
 
 // Similar to:
 // http://code.google.com/appengine/docs/go/memcache/reference.html
@@ -105,6 +103,8 @@ var (
 	resultNotFound  = []byte("NOT_FOUND\r\n")
 	resultDeleted   = []byte("DELETED\r\n")
 	resultEnd       = []byte("END\r\n")
+
+	resultClientErrorPrefix = []byte("CLIENT_ERROR ")
 )
 
 // New returns a memcache client using the provided server(s)
@@ -145,8 +145,8 @@ type Item struct {
 	// Object is the Item's value for use with a Codec.
 	Object interface{}
 
-	// Flags are server-opaque flags whose semantics are entirely up to the
-	// App Engine app.
+	// Flags are server-opaque flags whose semantics are entirely
+	// up to the app.
 	Flags uint32
 
 	// Expiration is the cache expiration time, in seconds: either a relative
@@ -491,15 +491,20 @@ func (c *Client) populateOne(rw *bufio.ReadWriter, verb string, item *Item) os.E
 	return fmt.Errorf("memcache: unexpected response line from %q: %q", verb, string(line))
 }
 
-func writeExpectf(rw *bufio.ReadWriter, expect []byte, format string, args ...interface{}) os.Error {
+func writeReadLine(rw *bufio.ReadWriter, format string, args ...interface{}) ([]byte, os.Error) {
 	_, err := fmt.Fprintf(rw, format, args...)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := rw.Flush(); err != nil {
-		return err
+		return nil, err
 	}
 	line, err := rw.ReadSlice('\n')
+	return line, err
+}
+
+func writeExpectf(rw *bufio.ReadWriter, expect []byte, format string, args ...interface{}) os.Error {
+	line, err := writeReadLine(rw, format, args...)
 	if err != nil {
 		return err
 	}
@@ -519,15 +524,49 @@ func writeExpectf(rw *bufio.ReadWriter, expect []byte, format string, args ...in
 // Delete deletes the item with the provided key. The error ErrCacheMiss is
 // returned if the item didn't already exist in the cache.
 func (c *Client) Delete(key string) os.Error {
-	return c.DeleteLock(key, 0)
+	return c.withKeyRw(key, func(rw *bufio.ReadWriter) os.Error {
+		return writeExpectf(rw, resultDeleted, "delete %s\r\n", key)
+	})
 }
 
-// Delete deletes the item with the provided key, also instructing the
-// server to not permit an "add" or "replace" commands to work on the
-// key for the given duration (in seconds). The error ErrCacheMiss is
-// returned if the item didn't already exist in the cache.
-func (c *Client) DeleteLock(key string, seconds int) os.Error {
-	return c.withKeyRw(key, func(rw *bufio.ReadWriter) os.Error {
-		return writeExpectf(rw, resultDeleted, "delete %s %d\r\n", key, seconds)
+// Increment atomically increments key by delta. The return value is
+// the new value after being incremented or an error. If the value
+// didn't exist in memcached the error is ErrCacheMiss. The value in
+// memcached must be an decimal number, or an error will be returned.
+// On 64-bit overflow, the new value wraps around.
+func (c *Client) Increment(key string, delta uint64) (newValue uint64, err os.Error) {
+	return c.incrDecr("incr", key, delta)
+}
+
+// Decrement atomically decrements key by delta. The return value is
+// the new value after being decremented or an error. If the value
+// didn't exist in memcached the error is ErrCacheMiss. The value in
+// memcached must be an decimal number, or an error will be returned.
+// On underflow, the new value is capped at zero and does not wrap
+// around.
+func (c *Client) Decrement(key string, delta uint64) (newValue uint64, err os.Error) {
+	return c.incrDecr("decr", key, delta)
+}
+
+func (c *Client) incrDecr(verb, key string, delta uint64) (uint64, os.Error) {
+	var val uint64
+	err := c.withKeyRw(key, func(rw *bufio.ReadWriter) os.Error {
+		line, err := writeReadLine(rw, "%s %s %d\r\n", verb, key, delta)
+		if err != nil {
+			return err
+		}
+		switch {
+		case bytes.Equal(line, resultNotFound):
+			return ErrCacheMiss
+		case bytes.HasPrefix(line, resultClientErrorPrefix):
+			errMsg := line[len(resultClientErrorPrefix) : len(line)-2]
+			return os.NewError("memcache: client error: " + string(errMsg))
+		}
+		val, err = strconv.Atoui64(string(line[:len(line)-2]))
+		if err != nil {
+			return err
+		}
+		return nil
 	})
+	return val, err
 }
