@@ -456,10 +456,10 @@ func (c *Client) populateOne(rw *bufio.ReadWriter, verb string, item *Item) os.E
 	}
 	var err os.Error
 	if verb == "cas" {
-		_, err = fmt.Fprintf(rw, "%s %s %d %d %d %d %d\r\n",
+		_, err = fmt.Fprintf(rw, "%s %s %d %d %d %d\r\n",
 			verb, item.Key, item.Flags, item.Expiration, len(item.Value), item.casid)
 	} else {
-		_, err = fmt.Fprintf(rw, "%s %s %d %d %d %d\r\n",
+		_, err = fmt.Fprintf(rw, "%s %s %d %d %d\r\n",
 			verb, item.Key, item.Flags, item.Expiration, len(item.Value))
 	}
 	if err != nil {
