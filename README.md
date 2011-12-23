@@ -7,7 +7,7 @@ This is a memcache client library for the Go programming language
 
 ### Using *goinstall*
 
-     $ goinstall github.com/bradfitz/gomemcache
+    $ goinstall github.com/bradfitz/gomemcache
 
 After this command *gomemcache* is ready to use. Its source will be in:
 
@@ -24,7 +24,7 @@ You can use `goinstall -u -a` for update all installed packages.
 ## Example
 
     import (
-            memcache "github.com/bradfitz/gomemcache"
+            "github.com/bradfitz/gomemcache/memcache"
     )
 
     func main() {
@@ -37,8 +37,9 @@ You can use `goinstall -u -a` for update all installed packages.
 
 ## Full docs, see:
 
-See http://gopkgdoc.appspot.com/pkg/github.com/bradfitz/gomemcache
+See http://gopkgdoc.appspot.com/pkg/github.com/bradfitz/gomemcache/memcache
 
 Or run:
 
-    $ godoc github.com/bradfitz/gomemcache
+    $ godoc github.com/bradfitz/gomemcache/memcache
+
