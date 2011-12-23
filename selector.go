@@ -18,7 +18,6 @@ package memcache
 
 import (
 	"hash/crc32"
-	"os"
 	"net"
 	"strings"
 	"sync"
@@ -31,7 +30,7 @@ import (
 type ServerSelector interface {
 	// PickServer returns the server address that a given item
 	// should be shared onto.
-	PickServer(key string) (net.Addr, os.Error)
+	PickServer(key string) (net.Addr, error)
 }
 
 // ServerList is a simple ServerSelector. Its zero value is usable.
@@ -49,7 +48,7 @@ type ServerList struct {
 // SetServers returns an error if any of the server names fail to
 // resolve. No attempt is made to connect to the server. If any error
 // is returned, no changes are made to the ServerList.
-func (ss *ServerList) SetServers(servers ...string) os.Error {
+func (ss *ServerList) SetServers(servers ...string) error {
 	naddr := make([]net.Addr, len(servers))
 	for i, server := range servers {
 		if strings.Contains(server, "/") {
@@ -73,7 +72,7 @@ func (ss *ServerList) SetServers(servers ...string) os.Error {
 	return nil
 }
 
-func (ss *ServerList) PickServer(key string) (net.Addr, os.Error) {
+func (ss *ServerList) PickServer(key string) (net.Addr, error) {
 	ss.lk.RLock()
 	defer ss.lk.RUnlock()
 	if len(ss.addrs) == 0 {

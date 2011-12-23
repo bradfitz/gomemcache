@@ -18,10 +18,10 @@ limitations under the License.
 package memcache
 
 import (
-	"exec"
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -70,7 +70,7 @@ func TestUnixSocket(t *testing.T) {
 }
 
 func testWithClient(t *testing.T, c *Client) {
-	checkErr := func(err os.Error, format string, args ...interface{}) {
+	checkErr := func(err error, format string, args ...interface{}) {
 		if err != nil {
 			t.Fatalf(format, args...)
 		}
@@ -157,7 +157,7 @@ func testWithClient(t *testing.T, c *Client) {
 	}
 	mustSet(&Item{Key: "num", Value: []byte("not-numeric")})
 	n, err = c.Increment("num", 1)
-	if err == nil || !strings.Contains(err.String(), "client error") {
+	if err == nil || !strings.Contains(err.Error(), "client error") {
 		t.Fatalf("increment non-number: want client error, got %v", err)
 	}
 
