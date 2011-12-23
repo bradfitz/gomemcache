@@ -64,8 +64,8 @@ var (
 	ErrNoServers = errors.New("memcache: no servers configured or available")
 )
 
-// DefaultTimeoutNanos is the default socket read/write timeout, in nanoseconds.
-const DefaultTimeoutNanos = 100e6 // 100 ms
+// DefaultTimeout is the default socket read/write timeout.
+const DefaultTimeout = time.Duration(100) * time.Millisecond
 
 const (
 	buffered            = 8 // arbitrary buffered channel size, for readability
@@ -125,9 +125,9 @@ func NewFromSelector(ss ServerSelector) *Client {
 // Client is a memcache client.
 // It is safe for unlocked use by multiple concurrent goroutines.
 type Client struct {
-	// TimeoutNanos specifies the socket read/write timeout.
-	// If zero, DefaultTimeoutNanos is used.
-	TimeoutNanos int64
+	// Timeout specifies the socket read/write timeout.
+	// If zero, DefaultTimeout is used.
+	Timeout time.Duration
 
 	selector ServerSelector
 
@@ -211,11 +211,11 @@ func (c *Client) getFreeConn(addr net.Addr) (cn *conn, ok bool) {
 	return cn, true
 }
 
-func (c *Client) netTimeoutNs() int64 {
-	if c.TimeoutNanos != 0 {
-		return c.TimeoutNanos
+func (c *Client) netTimeout() time.Duration {
+	if c.Timeout != 0 {
+		return c.Timeout
 	}
-	return DefaultTimeoutNanos
+	return DefaultTimeout
 }
 
 // ConnectTimeoutError is the error type used when it takes
@@ -242,7 +242,7 @@ func (c *Client) dial(addr net.Addr) (net.Conn, error) {
 	select {
 	case ce := <-ch:
 		return ce.cn, ce.err
-	case <-time.After(c.netTimeoutNs()):
+	case <-time.After(c.netTimeout()):
 		// Too slow. Fall through.
 	}
 	// Close the conn if it does end up finally coming in
@@ -264,7 +264,7 @@ func (c *Client) getConn(addr net.Addr) (*conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	nc.SetTimeout(c.netTimeoutNs())
+	nc.SetTimeout(int64(c.netTimeout()))
 	return &conn{
 		nc:   nc,
 		addr: addr,
