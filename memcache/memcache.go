@@ -218,6 +218,11 @@ func (c *Client) netTimeout() time.Duration {
 	return DefaultTimeout
 }
 
+func (c *Client) netDeadline() time.Time {
+	millis:=c.netTimeout()
+	return time.Now().Add(millis*time.Millisecond)
+}
+
 // ConnectTimeoutError is the error type used when it takes
 // too long to connect to the desired host. This level of
 // detail can generally be ignored.
@@ -264,7 +269,8 @@ func (c *Client) getConn(addr net.Addr) (*conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	nc.SetTimeout(int64(c.netTimeout()))
+//	nc.SetTimeout(int64(c.netTimeout()))
+	nc.SetDeadline(c.netDeadline())
 	return &conn{
 		nc:   nc,
 		addr: addr,
