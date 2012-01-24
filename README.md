@@ -7,18 +7,18 @@ This is a memcache client library for the Go programming language
 
 ### Using *goinstall*
 
-    $ goinstall github.com/bradfitz/gomemcache
+    $ goinstall github.com/bradfitz/gomemcache/memcache
 
 After this command *gomemcache* is ready to use. Its source will be in:
 
-    $GOROOT/src/pkg/github.com/bradfitz/gomemcache
+    $GOROOT/src/pkg/github.com/bradfitz/gomemcache/memcache
 
 You can use `goinstall -u -a` for update all installed packages.
 
 ### Using *git clone* command:
 
     $ git clone git://github.com/bradfitz/gomemcache
-    $ cd gomemcache
+    $ cd gomemcache/memcache
     $ make install
 
 ## Example
