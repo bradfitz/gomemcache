@@ -172,6 +172,10 @@ func (cn *conn) release() {
 	cn.c.putFreeConn(cn.addr, cn)
 }
 
+func (cn *conn) extendDeadline() {
+	cn.nc.SetDeadline(time.Now().Add(cn.c.netTimeout()))
+}
+
 // condRelease releases this connection if the error pointed to by err
 // is is nil (not an error) or is only a protocol level error (e.g. a
 // cache miss).  The purpose is to not recycle TCP connections that
@@ -258,19 +262,21 @@ func (c *Client) dial(addr net.Addr) (net.Conn, error) {
 func (c *Client) getConn(addr net.Addr) (*conn, error) {
 	cn, ok := c.getFreeConn(addr)
 	if ok {
+		cn.extendDeadline()
 		return cn, nil
 	}
 	nc, err := c.dial(addr)
 	if err != nil {
 		return nil, err
 	}
-	nc.SetTimeout(int64(c.netTimeout()))
-	return &conn{
+	cn = &conn{
 		nc:   nc,
 		addr: addr,
 		rw:   bufio.NewReadWriter(bufio.NewReader(nc), bufio.NewWriter(nc)),
 		c:    c,
-	}, nil
+	}
+	cn.extendDeadline()
+	return cn, nil
 }
 
 func (c *Client) onItem(item *Item, fn func(*Client, *bufio.ReadWriter, *Item) error) error {
