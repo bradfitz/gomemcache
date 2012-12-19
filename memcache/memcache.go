@@ -183,6 +183,8 @@ func (cn *conn) extendDeadline() {
 func (cn *conn) condRelease(err *error) {
 	if *err == nil || resumableError(*err) {
 		cn.release()
+	} else {
+		cn.nc.Close()
 	}
 }
 
