@@ -289,7 +289,7 @@ func (c *Client) onItem(item *Item, fn func(*Client, *bufio.ReadWriter, *Item) e
 		return err
 	}
 	defer cn.condRelease(&err)
-	if err := fn(c, cn.rw, item); err != nil {
+	if err = fn(c, cn.rw, item); err != nil {
 		return err
 	}
 	return nil
