@@ -63,7 +63,7 @@ func TestUnixSocket(t *testing.T) {
 		if _, err := os.Stat(sock); err == nil {
 			break
 		}
-		time.Sleep(time.Duration(25 * i) * time.Millisecond)
+		time.Sleep(time.Duration(25*i) * time.Millisecond)
 	}
 
 	testWithClient(t, New(sock))
@@ -161,4 +161,27 @@ func testWithClient(t *testing.T, c *Client) {
 		t.Fatalf("increment non-number: want client error, got %v", err)
 	}
 
+	// Touch
+	theAnswer := "6*9=42 works in base 13"
+	err = c.Add(&Item{Key: "touchpoint", Expiration: 5, Value: []byte(theAnswer)})
+	checkErr(err, "Touch check first expiration time: %v", err)
+	<-time.After(10 * time.Second)
+	_, err = c.Get("touchpoint")
+	if err != ErrCacheMiss {
+		t.Fatalf("Touch found item in cache after expiration: %v", err)
+	}
+	err = c.Add(&Item{Key: "touchpoint", Expiration: 5, Value: []byte(theAnswer)})
+	checkErr(err, "Touch check second expiration time: %v", err)
+	err = c.Touch(&Item{Key: "touchpoint", Expiration: 60})
+	if err == ErrServerError {
+		t.Logf("skipping test of 'touch'; must be memcached >= 1.4.8")
+	} else {
+		checkErr(err, "Touch check updated expiration time: %v", err)
+		<-time.After(10 * time.Second)
+		it, err = c.Get("touchpoint")
+		checkErr(err, "Touch get: %v", err)
+		if string(it.Value) != theAnswer {
+			t.Fatalf("unexpected value from get after touch: %v", it.Value)
+		}
+	}
 }
