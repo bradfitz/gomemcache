@@ -98,12 +98,14 @@ func legalKey(key string) bool {
 
 var (
 	crlf            = []byte("\r\n")
+	resultError     = []byte("ERROR\r\n")
 	resultStored    = []byte("STORED\r\n")
 	resultNotStored = []byte("NOT_STORED\r\n")
 	resultExists    = []byte("EXISTS\r\n")
 	resultNotFound  = []byte("NOT_FOUND\r\n")
 	resultDeleted   = []byte("DELETED\r\n")
 	resultEnd       = []byte("END\r\n")
+	resultTouched   = []byte("TOUCHED\r\n")
 
 	resultClientErrorPrefix = []byte("CLIENT_ERROR ")
 )
@@ -442,6 +444,39 @@ func (c *Client) Add(item *Item) error {
 
 func (c *Client) add(rw *bufio.ReadWriter, item *Item) error {
 	return c.populateOne(rw, "add", item)
+}
+
+// Touch resets the expiration time on an item. Returns nil to
+// indicate success, ErrCacheMiss if the given key was not in cache.
+func (c *Client) Touch(item *Item) error {
+	return c.onItem(item, (*Client).touch)
+}
+
+func (c *Client) touch(rw *bufio.ReadWriter, item *Item) (err error) {
+	if !legalKey(item.Key) {
+		return ErrMalformedKey
+	}
+	if _, err = fmt.Fprintf(rw, "touch %s %d\r\n", item.Key,
+		item.Expiration); err == nil {
+		if err = rw.Flush(); err == nil {
+			if line, err := rw.ReadSlice('\n'); err == nil {
+				switch {
+				case bytes.Equal(line, resultTouched):
+
+				// Most likely because server doesn't support TOUCH
+				case bytes.Equal(line, resultError):
+					err = ErrServerError
+				case bytes.Equal(line, resultNotFound):
+					err = ErrCacheMiss
+				default:
+					err = fmt.Errorf("memcache: unexpected response line from 'touch': %s",
+						string(line))
+				}
+			}
+		}
+	}
+
+	return
 }
 
 // CompareAndSwap writes the given item that was previously returned
