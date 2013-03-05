@@ -111,10 +111,12 @@ var (
 // New returns a memcache client using the provided server(s)
 // with equal weight. If a server is listed multiple times,
 // it gets a proportional amount of weight.
-func New(server ...string) *Client {
+func New(maxIdleConnsPerAddr int, server ...string) *Client {
 	ss := new(ServerList)
 	ss.SetServers(server...)
-	return NewFromSelector(ss)
+	cli := NewFromSelector(ss)
+	cli.maxIdleConnsPerAddr = maxIdleConnsPerAddr
+	return cli
 }
 
 // NewFromSelector returns a new Client using the provided ServerSelector.
@@ -131,8 +133,9 @@ type Client struct {
 
 	selector ServerSelector
 
-	lk       sync.Mutex
-	freeconn map[net.Addr][]*conn
+	lk                  sync.Mutex
+	freeconn            map[net.Addr][]*conn
+	maxIdleConnsPerAddr int
 }
 
 // Item is an item to be got or stored in a memcached server.
@@ -195,7 +198,7 @@ func (c *Client) putFreeConn(addr net.Addr, cn *conn) {
 		c.freeconn = make(map[net.Addr][]*conn)
 	}
 	freelist := c.freeconn[addr]
-	if len(freelist) >= maxIdleConnsPerAddr {
+	if len(freelist) >= c.maxIdleConnsPerAddr {
 		cn.nc.Close()
 		return
 	}
