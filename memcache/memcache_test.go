@@ -28,8 +28,8 @@ import (
 )
 
 const (
-    testServer = "localhost:11211"
-    maxIdleConnsPerAddr = 2
+	testServer          = "localhost:11211"
+	maxIdleConnsPerAddr = 2
 )
 
 func setup(t *testing.T) bool {
@@ -66,7 +66,7 @@ func TestUnixSocket(t *testing.T) {
 		if _, err := os.Stat(sock); err == nil {
 			break
 		}
-		time.Sleep(time.Duration(25 * i) * time.Millisecond)
+		time.Sleep(time.Duration(25*i) * time.Millisecond)
 	}
 
 	testWithClient(t, New(maxIdleConnsPerAddr, sock))
