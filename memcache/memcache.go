@@ -68,8 +68,8 @@ var (
 const DefaultTimeout = time.Duration(100) * time.Millisecond
 
 const (
-	buffered            = 8 // arbitrary buffered channel size, for readability
-	maxIdleConnsPerAddr = 2 // TODO(bradfitz): make this configurable?
+	buffered                   = 8 // arbitrary buffered channel size, for readability
+	defaultMaxIdleConnsPerAddr = 2
 )
 
 // resumableError returns true if err is only a protocol-level cache error.
@@ -117,9 +117,17 @@ func New(server ...string) *Client {
 	return NewFromSelector(ss)
 }
 
+// NewWithPoolThreshold returns a new Client with provided server(s)
+// and a configurable threshold of idle conns per server
+func NewWithConnThreshold(threshold int, server ...string) *Client {
+	cli := New(server...)
+	cli.maxIdleConnsPerAddr = threshold
+	return cli
+}
+
 // NewFromSelector returns a new Client using the provided ServerSelector.
 func NewFromSelector(ss ServerSelector) *Client {
-	return &Client{selector: ss}
+	return &Client{selector: ss, maxIdleConnsPerAddr: defaultMaxIdleConnsPerAddr}
 }
 
 // Client is a memcache client.
@@ -131,8 +139,9 @@ type Client struct {
 
 	selector ServerSelector
 
-	lk       sync.Mutex
-	freeconn map[net.Addr][]*conn
+	lk                  sync.Mutex
+	freeconn            map[net.Addr][]*conn
+	maxIdleConnsPerAddr int
 }
 
 // Item is an item to be got or stored in a memcached server.
@@ -195,7 +204,7 @@ func (c *Client) putFreeConn(addr net.Addr, cn *conn) {
 		c.freeconn = make(map[net.Addr][]*conn)
 	}
 	freelist := c.freeconn[addr]
-	if len(freelist) >= maxIdleConnsPerAddr {
+	if len(freelist) >= c.maxIdleConnsPerAddr {
 		cn.nc.Close()
 		return
 	}
