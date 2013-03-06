@@ -69,7 +69,7 @@ const DefaultTimeout = time.Duration(100) * time.Millisecond
 
 const (
 	buffered            = 8 // arbitrary buffered channel size, for readability
-	maxIdleConnsPerAddr = 2
+	defaultMaxIdleConnsPerAddr = 2
 )
 
 // resumableError returns true if err is only a protocol-level cache error.
@@ -127,7 +127,7 @@ func NewWithConnThreshold(threshold int, server ...string) *Client {
 
 // NewFromSelector returns a new Client using the provided ServerSelector.
 func NewFromSelector(ss ServerSelector) *Client {
-	return &Client{selector: ss, maxIdleConnsPerAddr: maxIdleConnsPerAddr}
+	return &Client{selector: ss, maxIdleConnsPerAddr: defaultMaxIdleConnsPerAddr}
 }
 
 // Client is a memcache client.
