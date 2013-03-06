@@ -68,7 +68,8 @@ var (
 const DefaultTimeout = time.Duration(100) * time.Millisecond
 
 const (
-	buffered = 8 // arbitrary buffered channel size, for readability
+	buffered            = 8 // arbitrary buffered channel size, for readability
+	maxIdleConnsPerAddr = 2
 )
 
 // resumableError returns true if err is only a protocol-level cache error.
@@ -110,17 +111,23 @@ var (
 // New returns a memcache client using the provided server(s)
 // with equal weight. If a server is listed multiple times,
 // it gets a proportional amount of weight.
-func New(maxIdleConnsPerAddr int, server ...string) *Client {
+func New(server ...string) *Client {
 	ss := new(ServerList)
 	ss.SetServers(server...)
-	cli := NewFromSelector(ss)
-	cli.maxIdleConnsPerAddr = maxIdleConnsPerAddr
+	return NewFromSelector(ss)
+}
+
+// NewWithPoolThreshold returns a new Client with provided server(s)
+// and a configurable threshold of idle conns per server
+func NewWithConnThreshold(threshold int, server ...string) *Client {
+	cli := New(server...)
+	cli.maxIdleConnsPerAddr = threshold
 	return cli
 }
 
 // NewFromSelector returns a new Client using the provided ServerSelector.
 func NewFromSelector(ss ServerSelector) *Client {
-	return &Client{selector: ss}
+	return &Client{selector: ss, maxIdleConnsPerAddr: maxIdleConnsPerAddr}
 }
 
 // Client is a memcache client.

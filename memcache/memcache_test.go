@@ -27,10 +27,7 @@ import (
 	"time"
 )
 
-const (
-	testServer          = "localhost:11211"
-	maxIdleConnsPerAddr = 2
-)
+const testServer = "localhost:11211"
 
 func setup(t *testing.T) bool {
 	c, err := net.Dial("tcp", testServer)
@@ -47,7 +44,7 @@ func TestLocalhost(t *testing.T) {
 	if !setup(t) {
 		return
 	}
-	testWithClient(t, New(maxIdleConnsPerAddr, testServer))
+	testWithClient(t, New(testServer))
 }
 
 // Run the memcached binary as a child process and connect to its unix socket.
@@ -69,7 +66,7 @@ func TestUnixSocket(t *testing.T) {
 		time.Sleep(time.Duration(25*i) * time.Millisecond)
 	}
 
-	testWithClient(t, New(maxIdleConnsPerAddr, sock))
+	testWithClient(t, New(sock))
 }
 
 func testWithClient(t *testing.T, c *Client) {

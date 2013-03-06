@@ -27,10 +27,8 @@ You can use `go get -u -a` for update all installed packages.
             "github.com/bradfitz/gomemcache/memcache"
     )
 
-    const maxIdleConnsPerAddr 2
-
     func main() {
-         mc := memcache.New(maxIdleConnsPerAddr, "10.0.0.1:11211", "10.0.0.2:11211", "10.0.0.3:11212")
+         mc := memcache.New("10.0.0.1:11211", "10.0.0.2:11211", "10.0.0.3:11212")
          mc.Set(&memcache.Item{Key: "foo", Value: []byte("my value")})
 
          it, err := mc.Get("foo")
