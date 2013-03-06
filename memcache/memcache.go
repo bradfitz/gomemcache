@@ -68,7 +68,7 @@ var (
 const DefaultTimeout = time.Duration(100) * time.Millisecond
 
 const (
-	buffered            = 8 // arbitrary buffered channel size, for readability
+	buffered                   = 8 // arbitrary buffered channel size, for readability
 	defaultMaxIdleConnsPerAddr = 2
 )
 
