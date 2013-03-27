@@ -136,7 +136,15 @@ func testWithClient(t *testing.T, c *Client) {
 	if err != ErrCacheMiss {
 		t.Errorf("post-Delete want ErrCacheMiss, got %v", err)
 	}
-
+	
+	// Test Delete All
+	err = c.DeleteAll()
+	checkErr(err, "DeleteAll: %v", err)
+	it, err = c.Get("bar")
+	if err != ErrCacheMiss {
+		t.Errorf("post-DeleteAll want ErrCacheMiss, got %v", err)
+	}
+	
 	// Incr/Decr
 	mustSet(&Item{Key: "num", Value: []byte("42")})
 	n, err := c.Increment("num", 8)
@@ -160,5 +168,5 @@ func testWithClient(t *testing.T, c *Client) {
 	if err == nil || !strings.Contains(err.Error(), "client error") {
 		t.Fatalf("increment non-number: want client error, got %v", err)
 	}
-
+	
 }
