@@ -99,6 +99,7 @@ func legalKey(key string) bool {
 var (
 	crlf            = []byte("\r\n")
 	space           = []byte(" ")
+	resultOK        = []byte("OK\r\n")
 	resultStored    = []byte("STORED\r\n")
 	resultNotStored = []byte("NOT_STORED\r\n")
 	resultExists    = []byte("EXISTS\r\n")
@@ -587,6 +588,8 @@ func writeExpectf(rw *bufio.ReadWriter, expect []byte, format string, args ...in
 		return err
 	}
 	switch {
+	case bytes.Equal(line, resultOK):
+		return nil
 	case bytes.Equal(line, expect):
 		return nil
 	case bytes.Equal(line, resultNotStored):
@@ -604,6 +607,13 @@ func writeExpectf(rw *bufio.ReadWriter, expect []byte, format string, args ...in
 func (c *Client) Delete(key string) error {
 	return c.withKeyRw(key, func(rw *bufio.ReadWriter) error {
 		return writeExpectf(rw, resultDeleted, "delete %s\r\n", key)
+	})
+}
+
+// DeleteAll deletes all items in the cache.
+func (c *Client) DeleteAll() error {
+	return c.withKeyRw("", func(rw *bufio.ReadWriter) error {
+		return writeExpectf(rw, resultDeleted, "flush_all\r\n")
 	})
 }
 

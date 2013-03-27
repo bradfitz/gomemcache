@@ -82,7 +82,7 @@ func testWithClient(t *testing.T, c *Client) {
 			t.Fatalf(format, args...)
 		}
 	}
-	mustSet := mustSetF(t, c) 
+	mustSet := mustSetF(t, c)
 
 	// Set
 	foo := &Item{Key: "foo", Value: []byte("fooval"), Flags: 123}
@@ -163,35 +163,45 @@ func testWithClient(t *testing.T, c *Client) {
 		t.Fatalf("increment non-number: want client error, got %v", err)
 	}
 	testTouchWithClient(t, c)
+
+	// Test Delete All
+	err = c.DeleteAll()
+	checkErr(err, "DeleteAll: %v", err)
+	it, err = c.Get("bar")
+	if err != ErrCacheMiss {
+		t.Errorf("post-DeleteAll want ErrCacheMiss, got %v", err)
+	}
+
 }
 
 func testTouchWithClient(t *testing.T, c *Client) {
 	if testing.Short() {
-		t.Skip("Skipping testing memcache Touch with testing in Short mode")
+		t.Log("Skipping testing memcache Touch with testing in Short mode")
+		return
 	}
-	
+
 	mustSet := mustSetF(t, c)
-	
+
 	const secondsToExpiry = int32(2)
-	
+
 	// We will set foo and bar to expire in 2 seconds, then we'll keep touching
 	// foo every second
 	// After 3 seconds, we expect foo to be available, and bar to be expired
-	foo := &Item{Key: "foo", Value: []byte("fooval"), Expiration: secondsToExpiry }
-	bar := &Item{Key: "bar", Value: []byte("barval"), Expiration: secondsToExpiry }
-	
+	foo := &Item{Key: "foo", Value: []byte("fooval"), Expiration: secondsToExpiry}
+	bar := &Item{Key: "bar", Value: []byte("barval"), Expiration: secondsToExpiry}
+
 	setTime := time.Now()
 	mustSet(foo)
 	mustSet(bar)
-	
-	for s:=0; s<3; s++ {
-		time.Sleep(time.Duration(1*time.Second))
+
+	for s := 0; s < 3; s++ {
+		time.Sleep(time.Duration(1 * time.Second))
 		err := c.Touch(foo.Key, secondsToExpiry)
-		if nil!=err {
+		if nil != err {
 			t.Errorf("error touching foo: %v", err.Error())
 		}
 	}
-	
+
 	_, err := c.Get("foo")
 	if err != nil {
 		if err == ErrCacheMiss {
@@ -200,9 +210,9 @@ func testTouchWithClient(t *testing.T, c *Client) {
 			t.Fatalf("unexpected error retrieving foo after touching: %v", err.Error())
 		}
 	}
-	
+
 	_, err = c.Get("bar")
-	if nil==err {
+	if nil == err {
 		t.Fatalf("item bar did not expire within %v seconds", time.Now().Sub(setTime).Seconds())
 	} else {
 		if err != ErrCacheMiss {
