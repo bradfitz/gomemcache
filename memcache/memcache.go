@@ -98,6 +98,7 @@ func legalKey(key string) bool {
 
 var (
 	crlf            = []byte("\r\n")
+	space           = []byte(" ")
 	resultStored    = []byte("STORED\r\n")
 	resultNotStored = []byte("NOT_STORED\r\n")
 	resultExists    = []byte("EXISTS\r\n")
@@ -403,14 +404,9 @@ func parseGetResponse(r *bufio.Reader, cb func(*Item)) error {
 			return nil
 		}
 		it := new(Item)
-		var size int
-		n, err := fmt.Sscanf(string(line), "VALUE %s %d %d %d\r\n",
-			&it.Key, &it.Flags, &size, &it.casid)
+		size, err := scanGetResponseLine(line, it)
 		if err != nil {
 			return err
-		}
-		if n != 4 {
-			return fmt.Errorf("memcache: unexpected line in get response: %q", string(line))
 		}
 		it.Value, err = ioutil.ReadAll(io.LimitReader(r, int64(size)+2))
 		if err != nil {
@@ -423,6 +419,22 @@ func parseGetResponse(r *bufio.Reader, cb func(*Item)) error {
 		cb(it)
 	}
 	panic("unreached")
+}
+
+// scanGetResponseLine populates it and returns the declared size of the item.
+// It does not read the bytes of the item.
+func scanGetResponseLine(line []byte, it *Item) (size int, err error) {
+	pattern := "VALUE %s %d %d %d\r\n"
+	dest := []interface{}{&it.Key, &it.Flags, &size, &it.casid}
+	if bytes.Count(line, space) == 3 {
+		pattern = "VALUE %s %d %d\r\n"
+		dest = dest[:3]
+	}
+	n, err := fmt.Sscanf(string(line), pattern, dest...)
+	if err != nil || n != len(dest) {
+		return -1, fmt.Errorf("memcache: unexpected line in get response: %q", line)
+	}
+	return size, nil
 }
 
 // Set writes the given item, unconditionally.
