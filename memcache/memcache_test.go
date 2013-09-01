@@ -69,18 +69,21 @@ func TestUnixSocket(t *testing.T) {
 	testWithClient(t, New(sock))
 }
 
+func mustSetF(t *testing.T, c *Client) func(*Item) {
+	return func(it *Item) {
+		if err := c.Set(it); err != nil {
+			t.Fatalf("failed to Set %#v: %v", *it, err)
+		}
+	}
+}
+
 func testWithClient(t *testing.T, c *Client) {
 	checkErr := func(err error, format string, args ...interface{}) {
 		if err != nil {
 			t.Fatalf(format, args...)
 		}
 	}
-
-	mustSet := func(it *Item) {
-		if err := c.Set(it); err != nil {
-			t.Fatalf("failed to Set %#v: %v", *it, err)
-		}
-	}
+	mustSet := mustSetF(t, c) 
 
 	// Set
 	foo := &Item{Key: "foo", Value: []byte("fooval"), Flags: 123}
@@ -160,5 +163,51 @@ func testWithClient(t *testing.T, c *Client) {
 	if err == nil || !strings.Contains(err.Error(), "client error") {
 		t.Fatalf("increment non-number: want client error, got %v", err)
 	}
+	testTouchWithClient(t, c)
+}
 
+func testTouchWithClient(t *testing.T, c *Client) {
+	if testing.Short() {
+		t.Skip("Skipping testing memcache Touch with testing in Short mode")
+	}
+	
+	mustSet := mustSetF(t, c)
+	
+	const secondsToExpiry = int32(2)
+	
+	// We will set foo and bar to expire in 2 seconds, then we'll keep touching
+	// foo every second
+	// After 3 seconds, we expect foo to be available, and bar to be expired
+	foo := &Item{Key: "foo", Value: []byte("fooval"), Expiration: secondsToExpiry }
+	bar := &Item{Key: "bar", Value: []byte("barval"), Expiration: secondsToExpiry }
+	
+	setTime := time.Now()
+	mustSet(foo)
+	mustSet(bar)
+	
+	for s:=0; s<3; s++ {
+		time.Sleep(time.Duration(1*time.Second))
+		err := c.Touch(foo.Key, secondsToExpiry)
+		if nil!=err {
+			t.Errorf("error touching foo: %v", err.Error())
+		}
+	}
+	
+	_, err := c.Get("foo")
+	if err != nil {
+		if err == ErrCacheMiss {
+			t.Fatalf("touching failed to keep item foo alive")
+		} else {
+			t.Fatalf("unexpected error retrieving foo after touching: %v", err.Error())
+		}
+	}
+	
+	_, err = c.Get("bar")
+	if nil==err {
+		t.Fatalf("item bar did not expire within %v seconds", time.Now().Sub(setTime).Seconds())
+	} else {
+		if err != ErrCacheMiss {
+			t.Fatalf("unexpected error retrieving bar: %v", err.Error())
+		}
+	}
 }
