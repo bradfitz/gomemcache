@@ -311,6 +311,10 @@ func (c *Client) Get(key string) (item *Item, err error) {
 	return
 }
 
+// Touch updates the expiry for the given key. The seconds parameter is either
+// a Unix timestamp or, if seconds is less than 1 month, the number of seconds
+// into the future at which time the item will expire. ErrCacheMiss is returned if the
+// key is not in the cache. The key must be at most 250 bytes in length.
 func (c *Client) Touch(key string, seconds int32) (err error) {
 	return c.withKeyAddr(key, func(addr net.Addr) error {
 		return c.touchFromAddr(addr, []string{key}, seconds)
