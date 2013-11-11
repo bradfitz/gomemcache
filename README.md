@@ -37,7 +37,7 @@ You can use `go get -u -a` for update all installed packages.
 
 ## Full docs, see:
 
-See http://gopkgdoc.appspot.com/pkg/github.com/bradfitz/gomemcache/memcache
+See http://godoc.org/github.com/bradfitz/gomemcache/memcache
 
 Or run:
 
