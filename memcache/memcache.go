@@ -232,6 +232,10 @@ type ConnectTimeoutError struct {
 	Addr net.Addr
 }
 
+type netConnectionTimeoutError interface {
+	Timeout() bool
+}
+
 func (cte *ConnectTimeoutError) Error() string {
 	return "memcache: connect timeout to " + cte.Addr.String()
 }
@@ -247,8 +251,10 @@ func (c *Client) dial(addr net.Addr) (net.Conn, error) {
 		return nc, nil
 	}
 
-	if err.Error() == "i/o timeout" {
-		return nil, &ConnectTimeoutError{addr}
+	if terr, ok := err.(netConnectionTimeoutError); ok {
+		if terr.Timeout() {
+			return nil, &ConnectTimeoutError{addr}
+		}
 	}
 
 	return nil, err
