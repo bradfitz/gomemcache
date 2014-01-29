@@ -105,7 +105,8 @@ var (
 	resultNotFound  = []byte("NOT_FOUND\r\n")
 	resultDeleted   = []byte("DELETED\r\n")
 	resultEnd       = []byte("END\r\n")
-	resultTouched	= []byte("TOUCHED\r\n")
+	resultOk        = []byte("OK\r\n")
+	resultTouched   = []byte("TOUCHED\r\n")
 
 	resultClientErrorPrefix = []byte("CLIENT_ERROR ")
 )
@@ -299,6 +300,10 @@ func (c *Client) onItem(item *Item, fn func(*Client, *bufio.ReadWriter, *Item) e
 	return nil
 }
 
+func (c *Client) FlushAll() error {
+	return c.selector.Each(c.flushAllFromAddr)
+}
+
 // Get gets the item for the given key. ErrCacheMiss is returned for a
 // memcache cache miss. The key must be at most 250 bytes in length.
 func (c *Client) Get(key string) (item *Item, err error) {
@@ -318,7 +323,7 @@ func (c *Client) Get(key string) (item *Item, err error) {
 func (c *Client) Touch(key string, seconds int32) (err error) {
 	return c.withKeyAddr(key, func(addr net.Addr) error {
 		return c.touchFromAddr(addr, []string{key}, seconds)
-	}) 
+	})
 }
 
 func (c *Client) withKeyAddr(key string, fn func(net.Addr) error) (err error) {
@@ -357,6 +362,29 @@ func (c *Client) getFromAddr(addr net.Addr, keys []string, cb func(*Item)) error
 		}
 		if err := parseGetResponse(rw.Reader, cb); err != nil {
 			return err
+		}
+		return nil
+	})
+}
+
+// flushAllFromAddr send the flush_all command to the given addr
+func (c *Client) flushAllFromAddr(addr net.Addr) error {
+	return c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
+		if _, err := fmt.Fprintf(rw, "flush_all\r\n"); err != nil {
+			return err
+		}
+		if err := rw.Flush(); err != nil {
+			return err
+		}
+		line, err := rw.ReadSlice('\n')
+		if err != nil {
+			return err
+		}
+		switch {
+		case bytes.Equal(line, resultOk):
+			break
+		default:
+			return fmt.Errorf("memcache: unexpected response line from flush_all: %q", string(line))
 		}
 		return nil
 	})
