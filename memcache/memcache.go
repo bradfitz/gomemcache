@@ -115,12 +115,21 @@ var (
 func New(server ...string) *Client {
 	ss := new(ServerList)
 	ss.SetServers(server...)
-	return NewFromSelector(ss)
+	return NewFromSelector(ss, false)
+}
+
+// New returns a memcache client using the provided server(s)
+// if there are multiple servers, each write operation occurs
+// on each one for redundancy
+func NewWithRedundancy(server ...string) *Client {
+	ss := new(ServerList)
+	ss.SetServers(server...)
+	return NewFromSelector(ss, true)
 }
 
 // NewFromSelector returns a new Client using the provided ServerSelector.
-func NewFromSelector(ss ServerSelector) *Client {
-	return &Client{selector: ss}
+func NewFromSelector(ss ServerSelector, redundant bool) *Client {
+	return &Client{selector: ss, redundant: redundant}
 }
 
 // Client is a memcache client.
@@ -132,8 +141,9 @@ type Client struct {
 
 	selector ServerSelector
 
-	lk       sync.Mutex
-	freeconn map[string][]*conn
+	lk        sync.Mutex
+	freeconn  map[string][]*conn
+	redundant bool
 }
 
 // Item is an item to be got or stored in a memcached server.
@@ -298,6 +308,26 @@ func (c *Client) onItem(item *Item, fn func(*Client, *bufio.ReadWriter, *Item) e
 	return nil
 }
 
+func (c *Client) onItemMulti(item *Item, fn func(*Client, *bufio.ReadWriter, *Item) error) error {
+	ss := c.selector.(*ServerList)
+	ss.lk.RLock()
+	defer ss.lk.RUnlock()
+	if len(ss.addrs) == 0 {
+		return ErrNoServers
+	}
+	for _, addr := range ss.addrs {
+		cn, err := c.getConn(addr)
+		if err != nil {
+			return err
+		}
+		defer cn.condRelease(&err)
+		if err = fn(c, cn.rw, item); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Get gets the item for the given key. ErrCacheMiss is returned for a
 // memcache cache miss. The key must be at most 250 bytes in length.
 func (c *Client) Get(key string) (item *Item, err error) {
@@ -439,7 +469,11 @@ func scanGetResponseLine(line []byte, it *Item) (size int, err error) {
 
 // Set writes the given item, unconditionally.
 func (c *Client) Set(item *Item) error {
-	return c.onItem(item, (*Client).set)
+	if c.redundant {
+		return c.onItemMulti(item, (*Client).set)
+	} else {
+		return c.onItem(item, (*Client).set)
+	}
 }
 
 func (c *Client) set(rw *bufio.ReadWriter, item *Item) error {
@@ -449,7 +483,11 @@ func (c *Client) set(rw *bufio.ReadWriter, item *Item) error {
 // Add writes the given item, if no value already exists for its
 // key. ErrNotStored is returned if that condition is not met.
 func (c *Client) Add(item *Item) error {
-	return c.onItem(item, (*Client).add)
+	if c.redundant {
+		return c.onItemMulti(item, (*Client).add)
+	} else {
+		return c.onItem(item, (*Client).add)
+	}
 }
 
 func (c *Client) add(rw *bufio.ReadWriter, item *Item) error {
@@ -464,7 +502,11 @@ func (c *Client) add(rw *bufio.ReadWriter, item *Item) error {
 // calls. ErrNotStored is returned if the value was evicted in between
 // the calls.
 func (c *Client) CompareAndSwap(item *Item) error {
-	return c.onItem(item, (*Client).cas)
+	if c.redundant {
+		return c.onItemMulti(item, (*Client).cas)
+	} else {
+		return c.onItem(item, (*Client).cas)
+	}
 }
 
 func (c *Client) cas(rw *bufio.ReadWriter, item *Item) error {
@@ -545,9 +587,19 @@ func writeExpectf(rw *bufio.ReadWriter, expect []byte, format string, args ...in
 // Delete deletes the item with the provided key. The error ErrCacheMiss is
 // returned if the item didn't already exist in the cache.
 func (c *Client) Delete(key string) error {
-	return c.withKeyRw(key, func(rw *bufio.ReadWriter) error {
-		return writeExpectf(rw, resultDeleted, "delete %s\r\n", key)
-	})
+	if c.redundant {
+		ss := c.selector.(*ServerList)
+		for _, addr := range ss.addrs {
+			c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
+				return writeExpectf(rw, resultDeleted, "delete %s\r\n", key)
+			})
+		}
+	} else {
+		return c.withKeyRw(key, func(rw *bufio.ReadWriter) error {
+			return writeExpectf(rw, resultDeleted, "delete %s\r\n", key)
+		})
+	}
+	return nil
 }
 
 // Increment atomically increments key by delta. The return value is
@@ -569,25 +621,44 @@ func (c *Client) Decrement(key string, delta uint64) (newValue uint64, err error
 	return c.incrDecr("decr", key, delta)
 }
 
+func (c *Client) _incrDecr(rw *bufio.ReadWriter, verb, key string, delta uint64) (uint64, error) {
+	var val uint64
+	line, err := writeReadLine(rw, "%s %s %d\r\n", verb, key, delta)
+	if err != nil {
+		return 0, err
+	}
+	switch {
+	case bytes.Equal(line, resultNotFound):
+		return 0, ErrCacheMiss
+	case bytes.HasPrefix(line, resultClientErrorPrefix):
+		errMsg := line[len(resultClientErrorPrefix) : len(line)-2]
+		return 0, errors.New("memcache: client error: " + string(errMsg))
+	}
+	val, err = strconv.ParseUint(string(line[:len(line)-2]), 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	return val, nil
+}
+
 func (c *Client) incrDecr(verb, key string, delta uint64) (uint64, error) {
 	var val uint64
-	err := c.withKeyRw(key, func(rw *bufio.ReadWriter) error {
-		line, err := writeReadLine(rw, "%s %s %d\r\n", verb, key, delta)
-		if err != nil {
+	var err error
+	if c.redundant {
+		ss := c.selector.(*ServerList)
+		for _, addr := range ss.addrs {
+			err = c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
+				var err error
+				val, err = c._incrDecr(rw, verb, key, delta)
+				return err
+			})
+		}
+	} else {
+		err = c.withKeyRw(key, func(rw *bufio.ReadWriter) error {
+			var err error
+			val, err = c._incrDecr(rw, verb, key, delta)
 			return err
-		}
-		switch {
-		case bytes.Equal(line, resultNotFound):
-			return ErrCacheMiss
-		case bytes.HasPrefix(line, resultClientErrorPrefix):
-			errMsg := line[len(resultClientErrorPrefix) : len(line)-2]
-			return errors.New("memcache: client error: " + string(errMsg))
-		}
-		val, err = strconv.ParseUint(string(line[:len(line)-2]), 10, 64)
-		if err != nil {
-			return err
-		}
-		return nil
-	})
+		})
+	}
 	return val, err
 }

@@ -27,16 +27,18 @@ import (
 	"time"
 )
 
-const testServer = "localhost:11211"
+var testServers = []string{"localhost:11211", "localhost:11212"}
 
 func setup(t *testing.T) bool {
-	c, err := net.Dial("tcp", testServer)
-	if err != nil {
-		t.Logf("skipping test; no server running at %s", testServer)
-		return false
+	for _, server := range testServers {
+		c, err := net.Dial("tcp", server)
+		if err != nil {
+			t.Logf("skipping test; no server running at %s", server)
+			return false
+		}
+		c.Write([]byte("flush_all\r\n"))
+		c.Close()
 	}
-	c.Write([]byte("flush_all\r\n"))
-	c.Close()
 	return true
 }
 
@@ -44,7 +46,14 @@ func TestLocalhost(t *testing.T) {
 	if !setup(t) {
 		return
 	}
-	testWithClient(t, New(testServer))
+	testWithClient(t, New(testServers...))
+}
+
+func TestRedundantLocalhost(t *testing.T) {
+	if !setup(t) {
+		return
+	}
+	testWithRedundantClient(t, NewWithRedundancy(testServers...))
 }
 
 // Run the memcached binary as a child process and connect to its unix socket.
@@ -63,35 +72,34 @@ func TestUnixSocket(t *testing.T) {
 		if _, err := os.Stat(sock); err == nil {
 			break
 		}
-		time.Sleep(time.Duration(25 * i) * time.Millisecond)
+		time.Sleep(time.Duration(25*i) * time.Millisecond)
 	}
 
 	testWithClient(t, New(sock))
 }
 
-func testWithClient(t *testing.T, c *Client) {
-	checkErr := func(err error, format string, args ...interface{}) {
-		if err != nil {
-			t.Fatalf(format, args...)
-		}
+func checkErr(t *testing.T, c *Client, err error, format string, args ...interface{}) {
+	if err != nil {
+		t.Fatalf(format, args...)
 	}
-
-	mustSet := func(it *Item) {
-		if err := c.Set(it); err != nil {
-			t.Fatalf("failed to Set %#v: %v", *it, err)
-		}
+}
+func mustSet(t *testing.T, c *Client, it *Item) {
+	if err := c.Set(it); err != nil {
+		t.Fatalf("failed to Set %#v: %v", *it, err)
 	}
+}
 
-	// Set
+func testSetWithClient(t *testing.T, c *Client) {
 	foo := &Item{Key: "foo", Value: []byte("fooval"), Flags: 123}
 	err := c.Set(foo)
-	checkErr(err, "first set(foo): %v", err)
+	checkErr(t, c, err, "first set(foo): %v", err)
 	err = c.Set(foo)
-	checkErr(err, "second set(foo): %v", err)
+	checkErr(t, c, err, "second set(foo): %v", err)
+}
 
-	// Get
+func testGetWithClient(t *testing.T, c *Client) {
 	it, err := c.Get("foo")
-	checkErr(err, "get(foo): %v", err)
+	checkErr(t, c, err, "get(foo): %v", err)
 	if it.Key != "foo" {
 		t.Errorf("get(foo) Key = %q, want foo", it.Key)
 	}
@@ -101,18 +109,20 @@ func testWithClient(t *testing.T, c *Client) {
 	if it.Flags != 123 {
 		t.Errorf("get(foo) Flags = %v, want 123", it.Flags)
 	}
+}
 
-	// Add
+func testAddWithClient(t *testing.T, c *Client) {
 	bar := &Item{Key: "bar", Value: []byte("barval")}
-	err = c.Add(bar)
-	checkErr(err, "first add(foo): %v", err)
+	err := c.Add(bar)
+	checkErr(t, c, err, "first add(foo): %v", err)
 	if err := c.Add(bar); err != ErrNotStored {
 		t.Fatalf("second add(foo) want ErrNotStored, got %v", err)
 	}
+}
 
-	// GetMulti
+func testGetMultiWithClient(t *testing.T, c *Client) {
 	m, err := c.GetMulti([]string{"foo", "bar"})
-	checkErr(err, "GetMulti: %v", err)
+	checkErr(t, c, err, "GetMulti: %v", err)
 	if g, e := len(m), 2; g != e {
 		t.Errorf("GetMulti: got len(map) = %d, want = %d", g, e)
 	}
@@ -128,37 +138,103 @@ func testWithClient(t *testing.T, c *Client) {
 	if g, e := string(m["bar"].Value), "barval"; g != e {
 		t.Errorf("GetMulti: bar: got %q, want %q", g, e)
 	}
+}
 
-	// Delete
-	err = c.Delete("foo")
-	checkErr(err, "Delete: %v", err)
-	it, err = c.Get("foo")
+func testDeleteWithClient(t *testing.T, c *Client) {
+	err := c.Delete("foo")
+	checkErr(t, c, err, "Delete: %v", err)
+	_, err = c.Get("foo")
 	if err != ErrCacheMiss {
 		t.Errorf("post-Delete want ErrCacheMiss, got %v", err)
 	}
+}
 
-	// Incr/Decr
-	mustSet(&Item{Key: "num", Value: []byte("42")})
+func testIncrDecrWithClient(t *testing.T, c *Client) {
+	mustSet(t, c, &Item{Key: "num", Value: []byte("42")})
 	n, err := c.Increment("num", 8)
-	checkErr(err, "Increment num + 8: %v", err)
+	checkErr(t, c, err, "Increment num + 8: %v", err)
 	if n != 50 {
 		t.Fatalf("Increment num + 8: want=50, got=%d", n)
 	}
 	n, err = c.Decrement("num", 49)
-	checkErr(err, "Decrement: %v", err)
+	checkErr(t, c, err, "Decrement: %v", err)
 	if n != 1 {
 		t.Fatalf("Decrement 49: want=1, got=%d", n)
 	}
 	err = c.Delete("num")
-	checkErr(err, "delete num: %v", err)
+	checkErr(t, c, err, "delete num: %v", err)
 	n, err = c.Increment("num", 1)
 	if err != ErrCacheMiss {
 		t.Fatalf("increment post-delete: want ErrCacheMiss, got %v", err)
 	}
-	mustSet(&Item{Key: "num", Value: []byte("not-numeric")})
+	mustSet(t, c, &Item{Key: "num", Value: []byte("not-numeric")})
 	n, err = c.Increment("num", 1)
 	if err == nil || !strings.Contains(err.Error(), "client error") {
 		t.Fatalf("increment non-number: want client error, got %v", err)
 	}
+}
+
+func testWithClient(t *testing.T, c *Client) {
+
+	testSetWithClient(t, c)
+
+	testGetWithClient(t, c)
+
+	testAddWithClient(t, c)
+
+	testGetMultiWithClient(t, c)
+
+	testDeleteWithClient(t, c)
+
+	testIncrDecrWithClient(t, c)
+
+}
+
+func testWithRedundantClient(t *testing.T, c *Client) {
+
+	testSetWithClient(t, c)
+	// Ensure redundancy
+	ss := c.selector.(*ServerList)
+	for _, addr := range ss.addrs {
+		c.getFromAddr(addr, []string{"foo"}, func(it *Item) {
+			if it.Key != "foo" {
+				t.Errorf("get(foo) Addr = %v, Key = %q, want foo", addr, it.Key)
+			}
+			if string(it.Value) != "fooval" {
+				t.Errorf("get(foo) Addr = %v, Value = %q, want fooval", addr, string(it.Value))
+			}
+		})
+	}
+
+	testGetWithClient(t, c)
+
+	testAddWithClient(t, c)
+	// Ensure redundancy
+	ss = c.selector.(*ServerList)
+	for _, addr := range ss.addrs {
+		c.getFromAddr(addr, []string{"bar"}, func(it *Item) {
+			if it.Key != "bar" {
+				t.Errorf("get(bar) Addr = %v, Key = %q, want bar", addr, it.Key)
+			}
+			if string(it.Value) != "barval" {
+				t.Errorf("get(bar) Addr = %v, Value = %q, want barval", addr, string(it.Value))
+			}
+		})
+	}
+
+	testGetMultiWithClient(t, c)
+
+	testDeleteWithClient(t, c)
+	// Ensure redundancy
+	ss = c.selector.(*ServerList)
+	for _, addr := range ss.addrs {
+		c.getFromAddr(addr, []string{"foo"}, func(it *Item) {
+			if it != nil {
+				t.Errorf("post-Delete Addr = %v want miss", addr)
+			}
+		})
+	}
+
+	testIncrDecrWithClient(t, c)
 
 }
