@@ -356,10 +356,6 @@ func (c *Client) onItem(item *Item, fn func(*Client, *bufio.ReadWriter, *Item) e
 	return nil
 }
 
-func (c *Client) Stats(serverIndex int) (stats map[string]string, err error) {
-	return nil, fmt.Errorf("not implemented")
-}
-
 // Get gets the item for the given key. ErrCacheMiss is returned for a
 // memcache cache miss. The key must be at most 250 bytes in length.
 func (c *Client) Get(key string) (item *Item, err error) {
