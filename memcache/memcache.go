@@ -26,6 +26,7 @@ import (
 	"io/ioutil"
 	"net"
 
+	"log"
 	"strconv"
 	"strings"
 	"sync"
@@ -315,15 +316,24 @@ func (c *Client) onItemMulti(item *Item, fn func(*Client, *bufio.ReadWriter, *It
 	if len(ss.addrs) == 0 {
 		return ErrNoServers
 	}
+	var failCount = 0
+	var err error
+	var cn *conn
 	for _, addr := range ss.addrs {
-		cn, err := c.getConn(addr)
+		cn, err = c.getConn(addr)
 		if err != nil {
-			return err
+			log.Printf("[memcache] Operation failed on key = %s, err = %v", item.Key, err)
+			failCount += 1
+			continue
 		}
 		defer cn.condRelease(&err)
 		if err = fn(c, cn.rw, item); err != nil {
-			return err
+			log.Printf("[memcache] Operation failed on key = %s, err = %v", item.Key, err)
+			failCount += 1
 		}
+	}
+	if failCount >= len(ss.addrs) {
+		return err
 	}
 	return nil
 }
@@ -589,10 +599,19 @@ func writeExpectf(rw *bufio.ReadWriter, expect []byte, format string, args ...in
 func (c *Client) Delete(key string) error {
 	if c.redundant {
 		ss := c.selector.(*ServerList)
+		var failCount = 0
+		var err error
 		for _, addr := range ss.addrs {
-			c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
+			err = c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
 				return writeExpectf(rw, resultDeleted, "delete %s\r\n", key)
 			})
+			if err != nil {
+				log.Printf("[memcache] Delete operation failed on key = %s, err = %v", key, err)
+				failCount += 1
+			}
+		}
+		if failCount == len(ss.addrs) {
+			return err
 		}
 	} else {
 		return c.withKeyRw(key, func(rw *bufio.ReadWriter) error {
