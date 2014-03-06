@@ -63,7 +63,7 @@ func TestUnixSocket(t *testing.T) {
 		if _, err := os.Stat(sock); err == nil {
 			break
 		}
-		time.Sleep(time.Duration(25 * i) * time.Millisecond)
+		time.Sleep(time.Duration(25*i) * time.Millisecond)
 	}
 
 	testWithClient(t, New(sock))
@@ -159,6 +159,27 @@ func testWithClient(t *testing.T, c *Client) {
 	n, err = c.Increment("num", 1)
 	if err == nil || !strings.Contains(err.Error(), "client error") {
 		t.Fatalf("increment non-number: want client error, got %v", err)
+	}
+
+	// FlushAll
+	mustSet(&Item{Key: "test", Value: []byte("666")})
+	err = c.FlushAll()
+	checkErr(err, "FlushAll: %v", err)
+	if _, err = c.Get("test"); err != ErrCacheMiss {
+		t.Fatalf("expected ErrCacheMiss after FlushAll, got %v", err)
+	}
+
+	// Stats
+	err = c.FlushAll()
+	checkErr(err, "FlushAll: %v", err)
+	mustSet(&Item{Key: "test1", Value: []byte("1")})
+	mustSet(&Item{Key: "test2", Value: []byte("2")})
+	mustSet(&Item{Key: "test3", Value: []byte("3")})
+
+	stats, err := c.Stats(0)
+	checkErr(err, "Stats: %v", err)
+	if stats["curr_items"] != "3" {
+		t.Fatalf("expected stats curr_items = 3, got '%v'", stats["curr_items"])
 	}
 
 }

@@ -189,6 +189,64 @@ func (cn *conn) condRelease(err *error) {
 	}
 }
 
+// FlushAll calls flush_all for all servers.
+// It will return with the first error,
+// and in this case not send flush_all to further servers if there are any.
+func (c *Client) FlushAll() error {
+	for _, server := range c.selector.AllServers() {
+		conn, err := c.getConn(server)
+		if err != nil {
+			return err
+		}
+		if _, err = fmt.Fprint(conn.rw, "flush_all\r\n"); err != nil {
+			return err
+		}
+		if err = conn.rw.Flush(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Stats returns the stats from the server with index serverIndex
+// in the slice returned by ServerSelector.AllServers().
+// Note that the order of servers returned from ServerSelector
+// is implementation specific.
+// The ServerSelector implementation ServerList maintains the order of servers.
+func (c *Client) Stats(serverIndex int) (map[string]string, error) {
+	servers := c.selector.AllServers()
+	if serverIndex < 0 || serverIndex >= len(servers) {
+		return nil, fmt.Errorf("memcached stats error: invalid serverIndex")
+	}
+	conn, err := c.getConn(servers[serverIndex])
+	if err != nil {
+		return nil, err
+	}
+	if _, err := fmt.Fprint(conn.rw, "stats\r\n"); err != nil {
+		return nil, err
+	}
+	if err := conn.rw.Flush(); err != nil {
+		return nil, err
+	}
+	stats := make(map[string]string)
+	line, err := conn.rw.ReadString('\n')
+	for err == nil && !strings.HasPrefix(line, "END") {
+		if strings.Contains(line, "ERROR") {
+			return nil, fmt.Errorf("memcached stats error: %s", strings.TrimSpace(line))
+		}
+		s := strings.SplitN(line, " ", 3)
+		if len(s) == 3 && s[0] == "STAT" {
+			stats[s[1]] = strings.TrimSpace(s[2])
+		}
+		line, err = conn.rw.ReadString('\n')
+	}
+	if err != nil {
+		return nil, err
+	}
+	return stats, nil
+
+}
+
 func (c *Client) putFreeConn(addr net.Addr, cn *conn) {
 	c.lk.Lock()
 	defer c.lk.Unlock()
