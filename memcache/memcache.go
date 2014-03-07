@@ -26,7 +26,6 @@ import (
 	"io/ioutil"
 	"net"
 
-	"log"
 	"strconv"
 	"strings"
 	"sync"
@@ -116,21 +115,29 @@ var (
 func New(server ...string) *Client {
 	ss := new(ServerList)
 	ss.SetServers(server...)
-	return NewFromSelector(ss, false)
-}
-
-// New returns a memcache client using the provided server(s)
-// if there are multiple servers, each write operation occurs
-// on each one for redundancy
-func NewWithRedundancy(server ...string) *Client {
-	ss := new(ServerList)
-	ss.SetServers(server...)
-	return NewFromSelector(ss, true)
+	return NewFromSelector(ss)
 }
 
 // NewFromSelector returns a new Client using the provided ServerSelector.
-func NewFromSelector(ss ServerSelector, redundant bool) *Client {
-	return &Client{selector: ss, redundant: redundant}
+func NewFromSelector(ss ServerSelector) *Client {
+	return &Client{selector: ss}
+}
+
+type MemcacheClient interface {
+	Get(key string) (item *Item, err error)
+
+	Set(item *Item) error
+
+	Add(item *Item) error
+
+	CompareAndSwap(item *Item) error
+
+	GetMulti(keys []string) (map[string]*Item, error)
+
+	Delete(key string) error
+
+	Increment(key string, delta uint64) (newValue uint64, err error)
+	Decrement(key string, delta uint64) (newValue uint64, err error)
 }
 
 // Client is a memcache client.
@@ -142,9 +149,8 @@ type Client struct {
 
 	selector ServerSelector
 
-	lk        sync.Mutex
-	freeconn  map[string][]*conn
-	redundant bool
+	lk       sync.Mutex
+	freeconn map[string][]*conn
 }
 
 // Item is an item to be got or stored in a memcached server.
@@ -309,35 +315,6 @@ func (c *Client) onItem(item *Item, fn func(*Client, *bufio.ReadWriter, *Item) e
 	return nil
 }
 
-func (c *Client) onItemMulti(item *Item, fn func(*Client, *bufio.ReadWriter, *Item) error) error {
-	ss := c.selector.(*ServerList)
-	ss.lk.RLock()
-	defer ss.lk.RUnlock()
-	if len(ss.addrs) == 0 {
-		return ErrNoServers
-	}
-	var failCount = 0
-	var err error
-	var cn *conn
-	for _, addr := range ss.addrs {
-		cn, err = c.getConn(addr)
-		if err != nil {
-			log.Printf("[memcache] Operation failed on key = %s, err = %v", item.Key, err)
-			failCount += 1
-			continue
-		}
-		defer cn.condRelease(&err)
-		if err = fn(c, cn.rw, item); err != nil {
-			log.Printf("[memcache] Operation failed on key = %s, err = %v", item.Key, err)
-			failCount += 1
-		}
-	}
-	if failCount >= len(ss.addrs) {
-		return err
-	}
-	return nil
-}
-
 // Get gets the item for the given key. ErrCacheMiss is returned for a
 // memcache cache miss. The key must be at most 250 bytes in length.
 func (c *Client) Get(key string) (item *Item, err error) {
@@ -479,11 +456,7 @@ func scanGetResponseLine(line []byte, it *Item) (size int, err error) {
 
 // Set writes the given item, unconditionally.
 func (c *Client) Set(item *Item) error {
-	if c.redundant {
-		return c.onItemMulti(item, (*Client).set)
-	} else {
-		return c.onItem(item, (*Client).set)
-	}
+	return c.onItem(item, (*Client).set)
 }
 
 func (c *Client) set(rw *bufio.ReadWriter, item *Item) error {
@@ -493,11 +466,7 @@ func (c *Client) set(rw *bufio.ReadWriter, item *Item) error {
 // Add writes the given item, if no value already exists for its
 // key. ErrNotStored is returned if that condition is not met.
 func (c *Client) Add(item *Item) error {
-	if c.redundant {
-		return c.onItemMulti(item, (*Client).add)
-	} else {
-		return c.onItem(item, (*Client).add)
-	}
+	return c.onItem(item, (*Client).add)
 }
 
 func (c *Client) add(rw *bufio.ReadWriter, item *Item) error {
@@ -512,11 +481,7 @@ func (c *Client) add(rw *bufio.ReadWriter, item *Item) error {
 // calls. ErrNotStored is returned if the value was evicted in between
 // the calls.
 func (c *Client) CompareAndSwap(item *Item) error {
-	if c.redundant {
-		return c.onItemMulti(item, (*Client).cas)
-	} else {
-		return c.onItem(item, (*Client).cas)
-	}
+	return c.onItem(item, (*Client).cas)
 }
 
 func (c *Client) cas(rw *bufio.ReadWriter, item *Item) error {
@@ -597,28 +562,9 @@ func writeExpectf(rw *bufio.ReadWriter, expect []byte, format string, args ...in
 // Delete deletes the item with the provided key. The error ErrCacheMiss is
 // returned if the item didn't already exist in the cache.
 func (c *Client) Delete(key string) error {
-	if c.redundant {
-		ss := c.selector.(*ServerList)
-		var failCount = 0
-		var err error
-		for _, addr := range ss.addrs {
-			err = c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
-				return writeExpectf(rw, resultDeleted, "delete %s\r\n", key)
-			})
-			if err != nil {
-				log.Printf("[memcache] Delete operation failed on key = %s, err = %v", key, err)
-				failCount += 1
-			}
-		}
-		if failCount == len(ss.addrs) {
-			return err
-		}
-	} else {
-		return c.withKeyRw(key, func(rw *bufio.ReadWriter) error {
-			return writeExpectf(rw, resultDeleted, "delete %s\r\n", key)
-		})
-	}
-	return nil
+	return c.withKeyRw(key, func(rw *bufio.ReadWriter) error {
+		return writeExpectf(rw, resultDeleted, "delete %s\r\n", key)
+	})
 }
 
 // Increment atomically increments key by delta. The return value is
@@ -663,21 +609,10 @@ func (c *Client) _incrDecr(rw *bufio.ReadWriter, verb, key string, delta uint64)
 func (c *Client) incrDecr(verb, key string, delta uint64) (uint64, error) {
 	var val uint64
 	var err error
-	if c.redundant {
-		ss := c.selector.(*ServerList)
-		for _, addr := range ss.addrs {
-			err = c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
-				var err error
-				val, err = c._incrDecr(rw, verb, key, delta)
-				return err
-			})
-		}
-	} else {
-		err = c.withKeyRw(key, func(rw *bufio.ReadWriter) error {
-			var err error
-			val, err = c._incrDecr(rw, verb, key, delta)
-			return err
-		})
-	}
+	err = c.withKeyRw(key, func(rw *bufio.ReadWriter) error {
+		var err error
+		val, err = c._incrDecr(rw, verb, key, delta)
+		return err
+	})
 	return val, err
 }

@@ -46,23 +46,6 @@ func TestLocalhost(t *testing.T) {
 	testWithClient(t, New(testServers...))
 }
 
-func TestRedundantLocalhost(t *testing.T) {
-	setup(t, testServers)
-	testWithRedundantClient(t, NewWithRedundancy(testServers...))
-}
-
-func TestRedundantLocalhostPartialFailure(t *testing.T) {
-	var servers = []string{"localhost:11211", "localhost:11213"}
-	setup(t, servers)
-	testWithRedundantPartialFailureClient(t, NewWithRedundancy(servers...))
-}
-
-func TestRedundantLocalhostFullFailure(t *testing.T) {
-	var servers = []string{"localhost:11213", "localhost:11214"}
-	setup(t, servers)
-	testWithRedundantFullFailureClient(t, NewWithRedundancy(servers...))
-}
-
 // Run the memcached binary as a child process and connect to its unix socket.
 func TestUnixSocket(t *testing.T) {
 	sock := fmt.Sprintf("/tmp/test-gomemcache-%d.sock", os.Getpid())
@@ -85,18 +68,18 @@ func TestUnixSocket(t *testing.T) {
 	testWithClient(t, New(sock))
 }
 
-func checkErr(t *testing.T, c *Client, err error, format string, args ...interface{}) {
+func checkErr(t *testing.T, c MemcacheClient, err error, format string, args ...interface{}) {
 	if err != nil {
 		t.Fatalf(format, args...)
 	}
 }
-func mustSet(t *testing.T, c *Client, it *Item) {
+func mustSet(t *testing.T, c MemcacheClient, it *Item) {
 	if err := c.Set(it); err != nil {
 		t.Fatalf("failed to Set %#v: %v", *it, err)
 	}
 }
 
-func testSetWithClient(t *testing.T, c *Client) {
+func testSetWithClient(t *testing.T, c MemcacheClient) {
 	foo := &Item{Key: "foo", Value: []byte("fooval"), Flags: 123}
 	err := c.Set(foo)
 	checkErr(t, c, err, "first set(foo): %v", err)
@@ -104,7 +87,7 @@ func testSetWithClient(t *testing.T, c *Client) {
 	checkErr(t, c, err, "second set(foo): %v", err)
 }
 
-func testGetWithClient(t *testing.T, c *Client) {
+func testGetWithClient(t *testing.T, c MemcacheClient) {
 	it, err := c.Get("foo")
 	checkErr(t, c, err, "get(foo): %v", err)
 	if it.Key != "foo" {
@@ -118,7 +101,7 @@ func testGetWithClient(t *testing.T, c *Client) {
 	}
 }
 
-func testAddWithClient(t *testing.T, c *Client) {
+func testAddWithClient(t *testing.T, c MemcacheClient) {
 	bar := &Item{Key: "bar", Value: []byte("barval")}
 	err := c.Add(bar)
 	checkErr(t, c, err, "first add(foo): %v", err)
@@ -127,7 +110,7 @@ func testAddWithClient(t *testing.T, c *Client) {
 	}
 }
 
-func testGetMultiWithClient(t *testing.T, c *Client) {
+func testGetMultiWithClient(t *testing.T, c MemcacheClient) {
 	m, err := c.GetMulti([]string{"foo", "bar"})
 	checkErr(t, c, err, "GetMulti: %v", err)
 	if g, e := len(m), 2; g != e {
@@ -147,7 +130,7 @@ func testGetMultiWithClient(t *testing.T, c *Client) {
 	}
 }
 
-func testDeleteWithClient(t *testing.T, c *Client) {
+func testDeleteWithClient(t *testing.T, c MemcacheClient) {
 	err := c.Delete("foo")
 	checkErr(t, c, err, "Delete: %v", err)
 	_, err = c.Get("foo")
@@ -156,7 +139,7 @@ func testDeleteWithClient(t *testing.T, c *Client) {
 	}
 }
 
-func testIncrDecrWithClient(t *testing.T, c *Client) {
+func testIncrDecrWithClient(t *testing.T, c MemcacheClient) {
 	mustSet(t, c, &Item{Key: "num", Value: []byte("42")})
 	n, err := c.Increment("num", 8)
 	checkErr(t, c, err, "Increment num + 8: %v", err)
@@ -181,7 +164,7 @@ func testIncrDecrWithClient(t *testing.T, c *Client) {
 	}
 }
 
-func testWithClient(t *testing.T, c *Client) {
+func testWithClient(t *testing.T, c MemcacheClient) {
 
 	testSetWithClient(t, c)
 
@@ -194,125 +177,5 @@ func testWithClient(t *testing.T, c *Client) {
 	testDeleteWithClient(t, c)
 
 	testIncrDecrWithClient(t, c)
-
-}
-
-func testWithRedundantClient(t *testing.T, c *Client) {
-
-	testSetWithClient(t, c)
-	// Ensure redundancy
-	ss := c.selector.(*ServerList)
-	for _, addr := range ss.addrs {
-		c.getFromAddr(addr, []string{"foo"}, func(it *Item) {
-			if it.Key != "foo" {
-				t.Errorf("get(foo) Addr = %v, Key = %q, want foo", addr, it.Key)
-			}
-			if string(it.Value) != "fooval" {
-				t.Errorf("get(foo) Addr = %v, Value = %q, want fooval", addr, string(it.Value))
-			}
-		})
-	}
-
-	testGetWithClient(t, c)
-
-	testAddWithClient(t, c)
-	// Ensure redundancy
-	for _, addr := range ss.addrs {
-		c.getFromAddr(addr, []string{"bar"}, func(it *Item) {
-			if it.Key != "bar" {
-				t.Errorf("get(bar) Addr = %v, Key = %q, want bar", addr, it.Key)
-			}
-			if string(it.Value) != "barval" {
-				t.Errorf("get(bar) Addr = %v, Value = %q, want barval", addr, string(it.Value))
-			}
-		})
-	}
-
-	testGetMultiWithClient(t, c)
-
-	testDeleteWithClient(t, c)
-	// Ensure redundancy
-	for _, addr := range ss.addrs {
-		c.getFromAddr(addr, []string{"foo"}, func(it *Item) {
-			if it != nil {
-				t.Errorf("post-Delete Addr = %v want miss", addr)
-			}
-		})
-	}
-
-	testIncrDecrWithClient(t, c)
-
-}
-
-func testWithRedundantPartialFailureClient(t *testing.T, c *Client) {
-
-	// Set
-	testSetWithClient(t, c)
-
-	ss := c.selector.(*ServerList)
-	c.getFromAddr(ss.addrs[0], []string{"foo"}, func(it *Item) {
-		if it.Key != "foo" {
-			t.Errorf("get(foo) Addr = %v, Key = %q, want foo", ss.addrs[0], it.Key)
-		}
-		if string(it.Value) != "fooval" {
-			t.Errorf("get(foo) Addr = %v, Value = %q, want fooval", ss.addrs[0], string(it.Value))
-		}
-	})
-	err := c.getFromAddr(ss.addrs[1], []string{"foo"}, func(it *Item) {
-		if it != nil {
-			t.Errorf("get(foo) Addr = %v, Key = %q, want miss", ss.addrs[1], it.Key)
-		}
-	})
-	if err == nil {
-		t.Errorf("get(foo) Addr = %v, want error", ss.addrs[1])
-	}
-
-	// Add
-	bar := &Item{Key: "bar", Value: []byte("barval")}
-	err = c.Add(bar)
-	checkErr(t, c, err, "first add(foo): %v", err)
-
-	c.getFromAddr(ss.addrs[0], []string{"bar"}, func(it *Item) {
-		if it.Key != "bar" {
-			t.Errorf("get(bar) Addr = %v, Key = %q, want bar", ss.addrs[0], it.Key)
-		}
-		if string(it.Value) != "barval" {
-			t.Errorf("get(bar) Addr = %v, Value = %q, want barval", ss.addrs[0], string(it.Value))
-		}
-	})
-
-	// Delete
-	err = c.Delete("foo")
-	checkErr(t, c, err, "Delete: %v", err)
-
-	c.getFromAddr(ss.addrs[0], []string{"foo"}, func(it *Item) {
-		if it != nil {
-			t.Errorf("post-Delete Addr = %v want miss", ss.addrs[0])
-		}
-	})
-
-}
-
-func testWithRedundantFullFailureClient(t *testing.T, c *Client) {
-
-	// Set
-	foo := &Item{Key: "foo", Value: []byte("fooval"), Flags: 123}
-	err := c.Set(foo)
-	if err == nil {
-		t.Errorf("set(foo), want error")
-	}
-
-	// Add
-	bar := &Item{Key: "bar", Value: []byte("barval")}
-	err = c.Add(bar)
-	if err == nil {
-		t.Errorf("add(bar), want error")
-	}
-
-	// Delete
-	err = c.Delete("foo")
-	if err == nil {
-		t.Errorf("add(bar), want error")
-	}
 
 }
