@@ -123,6 +123,23 @@ func NewFromSelector(ss ServerSelector) *Client {
 	return &Client{selector: ss}
 }
 
+type MemcacheClient interface {
+	Get(key string) (item *Item, err error)
+
+	Set(item *Item) error
+
+	Add(item *Item) error
+
+	CompareAndSwap(item *Item) error
+
+	GetMulti(keys []string) (map[string]*Item, error)
+
+	Delete(key string) error
+
+	Increment(key string, delta uint64) (newValue uint64, err error)
+	Decrement(key string, delta uint64) (newValue uint64, err error)
+}
+
 // Client is a memcache client.
 // It is safe for unlocked use by multiple concurrent goroutines.
 type Client struct {
@@ -569,25 +586,33 @@ func (c *Client) Decrement(key string, delta uint64) (newValue uint64, err error
 	return c.incrDecr("decr", key, delta)
 }
 
+func (c *Client) _incrDecr(rw *bufio.ReadWriter, verb, key string, delta uint64) (uint64, error) {
+	var val uint64
+	line, err := writeReadLine(rw, "%s %s %d\r\n", verb, key, delta)
+	if err != nil {
+		return 0, err
+	}
+	switch {
+	case bytes.Equal(line, resultNotFound):
+		return 0, ErrCacheMiss
+	case bytes.HasPrefix(line, resultClientErrorPrefix):
+		errMsg := line[len(resultClientErrorPrefix) : len(line)-2]
+		return 0, errors.New("memcache: client error: " + string(errMsg))
+	}
+	val, err = strconv.ParseUint(string(line[:len(line)-2]), 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	return val, nil
+}
+
 func (c *Client) incrDecr(verb, key string, delta uint64) (uint64, error) {
 	var val uint64
-	err := c.withKeyRw(key, func(rw *bufio.ReadWriter) error {
-		line, err := writeReadLine(rw, "%s %s %d\r\n", verb, key, delta)
-		if err != nil {
-			return err
-		}
-		switch {
-		case bytes.Equal(line, resultNotFound):
-			return ErrCacheMiss
-		case bytes.HasPrefix(line, resultClientErrorPrefix):
-			errMsg := line[len(resultClientErrorPrefix) : len(line)-2]
-			return errors.New("memcache: client error: " + string(errMsg))
-		}
-		val, err = strconv.ParseUint(string(line[:len(line)-2]), 10, 64)
-		if err != nil {
-			return err
-		}
-		return nil
+	var err error
+	err = c.withKeyRw(key, func(rw *bufio.ReadWriter) error {
+		var err error
+		val, err = c._incrDecr(rw, verb, key, delta)
+		return err
 	})
 	return val, err
 }
