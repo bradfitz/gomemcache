@@ -298,6 +298,104 @@ func (c *Client) onItem(item *Item, fn func(*Client, *bufio.ReadWriter, *Item) e
 	return nil
 }
 
+func (c *Client) Keys() ([]string, error) {
+	keys := []string{}
+	var errKey error
+	for _, addr := range c.selector.GetServers() {
+		if err := c.keysFromAddr(addr, &keys); err != nil {
+			errKey = errors.New("[memcache] Keys: not all servers scanned: " + err.Error())
+		}
+	}
+	return keys, errKey
+}
+
+func (c *Client) keysFromAddr(addr net.Addr, keys *[]string) error {
+	return c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
+		if _, err := fmt.Fprint(rw, "stats items\r\n"); err != nil {
+			return err
+		}
+		if err := rw.Flush(); err != nil {
+			return err
+		}
+		slabs, err := parseItemsResponse(rw.Reader)
+		if err != nil {
+			return err
+		}
+
+		for slab, count := range slabs {
+			if _, err := fmt.Fprintf(rw, "stats cachedump %d %d\r\n", slab, count); err != nil {
+				return err
+			}
+			if err := rw.Flush(); err != nil {
+				return err
+			}
+			if err := parseDumpResponse(rw.Reader, keys); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
+}
+
+func parseItemsResponse(r *bufio.Reader) (map[int]int, error) {
+	slabs := map[int]int{}
+	for {
+		line, err := r.ReadSlice('\n')
+		if err != nil {
+			return nil, err
+		}
+		if bytes.Equal(line, resultEnd) {
+			return slabs, nil
+		}
+		slabId, count, err := scanItemsResponseLine(line)
+		if err == nil {
+			slabs[slabId] = count
+		}
+	}
+	return nil, nil
+}
+
+func scanItemsResponseLine(line []byte) (int, int, error) {
+	var slabId int
+	var count int
+	pattern := "STAT items:%d:number %d\r\n"
+	dest := []interface{}{&slabId, &count}
+	n, err := fmt.Sscanf(string(line), pattern, dest...)
+	if err != nil || n != len(dest) {
+		return -1, -1, fmt.Errorf("memcache: unexpected line in get response: %q", line)
+	}
+	return slabId, count, nil
+}
+
+func parseDumpResponse(r *bufio.Reader, keys *[]string) error {
+	for {
+		line, err := r.ReadSlice('\n')
+		if err != nil {
+			return err
+		}
+		if bytes.Equal(line, resultEnd) {
+			return nil
+		}
+		key, err := scanDumpResponseLine(line)
+		if err == nil {
+			*keys = append(*keys, key)
+		}
+	}
+	return nil
+}
+
+func scanDumpResponseLine(line []byte) (string, error) {
+	var key string
+	pattern := "ITEM %s\r\n"
+	dest := []interface{}{&key}
+	n, err := fmt.Sscanf(string(line), pattern, dest...)
+	if err != nil || n != len(dest) {
+		return "", fmt.Errorf("memcache: unexpected line in get response: %q", line)
+	}
+	return key, nil
+}
+
 // Get gets the item for the given key. ErrCacheMiss is returned for a
 // memcache cache miss. The key must be at most 250 bytes in length.
 func (c *Client) Get(key string) (item *Item, err error) {
