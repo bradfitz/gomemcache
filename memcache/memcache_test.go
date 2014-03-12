@@ -102,6 +102,13 @@ func testWithClient(t *testing.T, c *Client) {
 		t.Errorf("get(foo) Flags = %v, want 123", it.Flags)
 	}
 
+	// Keys
+	keys, err := c.Keys()
+	checkErr(err, "keys: %v", err)
+	if keys[0] != "foo" {
+		t.Errorf("keys() keys[0] = &s, want foo", keys[0])
+	}
+
 	// Add
 	bar := &Item{Key: "bar", Value: []byte("barval")}
 	err = c.Add(bar)
