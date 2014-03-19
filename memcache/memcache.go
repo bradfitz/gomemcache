@@ -84,7 +84,7 @@ func resumableError(err error) bool {
 	return false
 }
 
-func legalKey(key string) bool {
+func ValidKey(key string) bool {
 	if len(key) > 250 {
 		return false
 	}
@@ -369,7 +369,7 @@ func (c *Client) Get(key string) (item *Item, err error) {
 }
 
 func (c *Client) withKeyAddr(key string, fn func(net.Addr) error) (err error) {
-	if !legalKey(key) {
+	if !ValidKey(key) {
 		return ErrMalformedKey
 	}
 	addr, err := c.selector.PickServer(key)
@@ -424,7 +424,7 @@ func (c *Client) GetMulti(keys []string) (map[string]*Item, error) {
 
 	keyMap := make(map[net.Addr][]string)
 	for _, key := range keys {
-		if !legalKey(key) {
+		if !ValidKey(key) {
 			return nil, ErrMalformedKey
 		}
 		addr, err := c.selector.PickServer(key)
@@ -530,7 +530,7 @@ func (c *Client) cas(rw *bufio.ReadWriter, item *Item) error {
 }
 
 func (c *Client) populateOne(rw *bufio.ReadWriter, verb string, item *Item) error {
-	if !legalKey(item.Key) {
+	if !ValidKey(item.Key) {
 		return ErrMalformedKey
 	}
 	var err error
