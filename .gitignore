@@ -1,3 +1,4 @@
 _*
 *.out
 *~
+memcache_stats/memcache_stats
