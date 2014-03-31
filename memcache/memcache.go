@@ -559,6 +559,25 @@ func (c *Client) Increment(key string, delta uint64) (newValue uint64, err error
 	return c.incrDecr("incr", key, delta)
 }
 
+func (c *Client) FlushAll()error {
+	addrs:=c.selector.GetServers()
+	var err error
+	for _,addr:= range addrs{
+		conn,err:=c.getConn(addr)
+		defer conn.release()
+		if err!=nil{
+			continue
+		}
+		if _, err := conn.rw.WriteString("flush_all"); err != nil {
+			continue
+		}
+		if err := conn.rw.Flush(); err != nil {
+			continue
+		}
+	}
+	return err
+}
+
 // Decrement atomically decrements key by delta. The return value is
 // the new value after being decremented or an error. If the value
 // didn't exist in memcached the error is ErrCacheMiss. The value in
