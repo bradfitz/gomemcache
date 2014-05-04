@@ -31,6 +31,7 @@ type ServerSelector interface {
 	// PickServer returns the server address that a given item
 	// should be shared onto.
 	PickServer(key string) (net.Addr, error)
+	GetServers()[]net.Addr
 }
 
 // ServerList is a simple ServerSelector. Its zero value is usable.
@@ -70,6 +71,12 @@ func (ss *ServerList) SetServers(servers ...string) error {
 	defer ss.lk.Unlock()
 	ss.addrs = naddr
 	return nil
+}
+
+func (ss *ServerList) GetServers()[]net.Addr{
+	ss.lk.RLock()
+	defer ss.lk.RUnlock()
+	return  ss.addrs
 }
 
 func (ss *ServerList) PickServer(key string) (net.Addr, error) {

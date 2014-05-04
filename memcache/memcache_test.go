@@ -161,4 +161,16 @@ func testWithClient(t *testing.T, c *Client) {
 		t.Fatalf("increment non-number: want client error, got %v", err)
 	}
 
+	foo = &Item{Key: "foo", Value: []byte("fooval"), Flags: 123}
+	err = c.Set(foo)
+	checkErr(err, "first set(foo): %v", err)
+	err = c.Set(foo)
+	checkErr(err, "second set(foo): %v", err)
+
+	err = c.FlushAll()
+	checkErr(err, "first set(foo): %v", err)
+	v,err:=c.Get("foo")
+	if v!=nil{
+		t.Errorf("t should be nil",v)
+	}
 }
