@@ -234,6 +234,10 @@ type ConnectTimeoutError struct {
 	Addr net.Addr
 }
 
+type netConnectionTimeoutError interface {
+	Timeout() bool
+}
+
 func (cte *ConnectTimeoutError) Error() string {
 	return "memcache: connect timeout to " + cte.Addr.String()
 }
@@ -243,25 +247,19 @@ func (c *Client) dial(addr net.Addr) (net.Conn, error) {
 		cn  net.Conn
 		err error
 	}
-	ch := make(chan connError)
-	go func() {
-		nc, err := net.Dial(addr.Network(), addr.String())
-		ch <- connError{nc, err}
-	}()
-	select {
-	case ce := <-ch:
-		return ce.cn, ce.err
-	case <-time.After(c.netTimeout()):
-		// Too slow. Fall through.
+
+	nc, err := net.DialTimeout(addr.Network(), addr.String(), c.netTimeout())
+	if err == nil {
+		return nc, nil
 	}
-	// Close the conn if it does end up finally coming in
-	go func() {
-		ce := <-ch
-		if ce.err == nil {
-			ce.cn.Close()
+
+	if terr, ok := err.(netConnectionTimeoutError); ok {
+		if terr.Timeout() {
+			return nil, &ConnectTimeoutError{addr}
 		}
-	}()
-	return nil, &ConnectTimeoutError{addr}
+	}
+
+	return nil, err
 }
 
 func (c *Client) getConn(addr net.Addr) (*conn, error) {
