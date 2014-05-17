@@ -105,6 +105,8 @@ var (
 	resultNotFound  = []byte("NOT_FOUND\r\n")
 	resultDeleted   = []byte("DELETED\r\n")
 	resultEnd       = []byte("END\r\n")
+	resultOk        = []byte("OK\r\n")
+	resultTouched   = []byte("TOUCHED\r\n")
 
 	resultClientErrorPrefix = []byte("CLIENT_ERROR ")
 )
@@ -178,7 +180,7 @@ func (cn *conn) extendDeadline() {
 }
 
 // condRelease releases this connection if the error pointed to by err
-// is is nil (not an error) or is only a protocol level error (e.g. a
+// is nil (not an error) or is only a protocol level error (e.g. a
 // cache miss).  The purpose is to not recycle TCP connections that
 // are bad.
 func (cn *conn) condRelease(err *error) {
@@ -298,6 +300,10 @@ func (c *Client) onItem(item *Item, fn func(*Client, *bufio.ReadWriter, *Item) e
 	return nil
 }
 
+func (c *Client) FlushAll() error {
+	return c.selector.Each(c.flushAllFromAddr)
+}
+
 // Get gets the item for the given key. ErrCacheMiss is returned for a
 // memcache cache miss. The key must be at most 250 bytes in length.
 func (c *Client) Get(key string) (item *Item, err error) {
@@ -308,6 +314,16 @@ func (c *Client) Get(key string) (item *Item, err error) {
 		err = ErrCacheMiss
 	}
 	return
+}
+
+// Touch updates the expiry for the given key. The seconds parameter is either
+// a Unix timestamp or, if seconds is less than 1 month, the number of seconds
+// into the future at which time the item will expire. ErrCacheMiss is returned if the
+// key is not in the cache. The key must be at most 250 bytes in length.
+func (c *Client) Touch(key string, seconds int32) (err error) {
+	return c.withKeyAddr(key, func(addr net.Addr) error {
+		return c.touchFromAddr(addr, []string{key}, seconds)
+	})
 }
 
 func (c *Client) withKeyAddr(key string, fn func(net.Addr) error) (err error) {
@@ -346,6 +362,55 @@ func (c *Client) getFromAddr(addr net.Addr, keys []string, cb func(*Item)) error
 		}
 		if err := parseGetResponse(rw.Reader, cb); err != nil {
 			return err
+		}
+		return nil
+	})
+}
+
+// flushAllFromAddr send the flush_all command to the given addr
+func (c *Client) flushAllFromAddr(addr net.Addr) error {
+	return c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
+		if _, err := fmt.Fprintf(rw, "flush_all\r\n"); err != nil {
+			return err
+		}
+		if err := rw.Flush(); err != nil {
+			return err
+		}
+		line, err := rw.ReadSlice('\n')
+		if err != nil {
+			return err
+		}
+		switch {
+		case bytes.Equal(line, resultOk):
+			break
+		default:
+			return fmt.Errorf("memcache: unexpected response line from flush_all: %q", string(line))
+		}
+		return nil
+	})
+}
+
+func (c *Client) touchFromAddr(addr net.Addr, keys []string, expiration int32) error {
+	return c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
+		for _, key := range keys {
+			if _, err := fmt.Fprintf(rw, "touch %s %d\r\n", key, expiration); err != nil {
+				return err
+			}
+			if err := rw.Flush(); err != nil {
+				return err
+			}
+			line, err := rw.ReadSlice('\n')
+			if err != nil {
+				return err
+			}
+			switch {
+			case bytes.Equal(line, resultTouched):
+				break
+			case bytes.Equal(line, resultNotFound):
+				return ErrCacheMiss
+			default:
+				return fmt.Errorf("memcache: unexpected response line from touch: %q", string(line))
+			}
 		}
 		return nil
 	})

@@ -31,6 +31,7 @@ type ServerSelector interface {
 	// PickServer returns the server address that a given item
 	// should be shared onto.
 	PickServer(key string) (net.Addr, error)
+	Each(func(net.Addr) error) error
 }
 
 // ServerList is a simple ServerSelector. Its zero value is usable.
@@ -69,6 +70,18 @@ func (ss *ServerList) SetServers(servers ...string) error {
 	ss.lk.Lock()
 	defer ss.lk.Unlock()
 	ss.addrs = naddr
+	return nil
+}
+
+// Each iterates over each server calling the given function
+func (ss *ServerList) Each(f func(net.Addr) error) error {
+	ss.lk.RLock()
+	defer ss.lk.RUnlock()
+	for _, a := range ss.addrs {
+		if err := f(a); nil != err {
+			return err
+		}
+	}
 	return nil
 }
 
