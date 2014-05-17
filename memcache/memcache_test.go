@@ -32,8 +32,7 @@ const testServer = "localhost:11211"
 func setup(t *testing.T) bool {
 	c, err := net.Dial("tcp", testServer)
 	if err != nil {
-		t.Logf("skipping test; no server running at %s", testServer)
-		return false
+		t.Skipf("skipping test; no server running at %s", testServer)
 	}
 	c.Write([]byte("flush_all\r\n"))
 	c.Close()
@@ -52,7 +51,7 @@ func TestUnixSocket(t *testing.T) {
 	sock := fmt.Sprintf("/tmp/test-gomemcache-%d.sock", os.Getpid())
 	cmd := exec.Command("memcached", "-s", sock)
 	if err := cmd.Start(); err != nil {
-		t.Logf("skipping test; couldn't find memcached")
+		t.Skipf("skipping test; couldn't find memcached")
 		return
 	}
 	defer cmd.Wait()
