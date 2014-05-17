@@ -112,6 +112,14 @@ func testWithClient(t *testing.T, c *Client) {
 		t.Fatalf("second add(foo) want ErrNotStored, got %v", err)
 	}
 
+	// Replace
+	baz := &Item{Key: "baz", Value: []byte("bazvalue")}
+	if err := c.Replace(baz); err != ErrNotStored {
+		t.Fatalf("expected replace(baz) to return ErrNotStored, got %v", err)
+	}
+	err = c.Replace(bar)
+	checkErr(err, "replaced(foo): %v", err)
+
 	// GetMulti
 	m, err := c.GetMulti([]string{"foo", "bar"})
 	checkErr(err, "GetMulti: %v", err)

@@ -514,6 +514,16 @@ func (c *Client) add(rw *bufio.ReadWriter, item *Item) error {
 	return c.populateOne(rw, "add", item)
 }
 
+// Replace writes the given item, but only if the server *does*
+// already hold data for this key
+func (c *Client) Replace(item *Item) error {
+	return c.onItem(item, (*Client).replace)
+}
+
+func (c *Client) replace(rw *bufio.ReadWriter, item *Item) error {
+	return c.populateOne(rw, "replace", item)
+}
+
 // CompareAndSwap writes the given item that was previously returned
 // by Get, if the value was neither modified or evicted between the
 // Get and the CompareAndSwap calls. The item's Key should not change
