@@ -476,7 +476,6 @@ func parseGetResponse(r *bufio.Reader, cb func(*Item)) error {
 		it.Value = it.Value[:size]
 		cb(it)
 	}
-	panic("unreached")
 }
 
 // scanGetResponseLine populates it and returns the declared size of the item.
