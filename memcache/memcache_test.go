@@ -76,24 +76,25 @@ func mustSetF(t *testing.T, c *Client) func(*Item) {
 	}
 }
 
-func testWithClient(t *testing.T, c *Client) {
-	checkErr := func(err error, format string, args ...interface{}) {
-		if err != nil {
-			t.Fatalf(format, args...)
-		}
+func checkErr(t *testing.T, err error, format string, args ...interface{}) {
+	if err != nil {
+		t.Fatalf(format, args...)
 	}
+}
+
+func testWithClient(t *testing.T, c *Client) {
 	mustSet := mustSetF(t, c)
 
 	// Set
 	foo := &Item{Key: "foo", Value: []byte("fooval"), Flags: 123}
 	err := c.Set(foo)
-	checkErr(err, "first set(foo): %v", err)
+	checkErr(t, err, "first set(foo): %v", err)
 	err = c.Set(foo)
-	checkErr(err, "second set(foo): %v", err)
+	checkErr(t, err, "second set(foo): %v", err)
 
 	// Get
 	it, err := c.Get("foo")
-	checkErr(err, "get(foo): %v", err)
+	checkErr(t, err, "get(foo): %v", err)
 	if it.Key != "foo" {
 		t.Errorf("get(foo) Key = %q, want foo", it.Key)
 	}
@@ -107,7 +108,7 @@ func testWithClient(t *testing.T, c *Client) {
 	// Add
 	bar := &Item{Key: "bar", Value: []byte("barval")}
 	err = c.Add(bar)
-	checkErr(err, "first add(foo): %v", err)
+	checkErr(t, err, "first add(foo): %v", err)
 	if err := c.Add(bar); err != ErrNotStored {
 		t.Fatalf("second add(foo) want ErrNotStored, got %v", err)
 	}
@@ -118,11 +119,11 @@ func testWithClient(t *testing.T, c *Client) {
 		t.Fatalf("expected replace(baz) to return ErrNotStored, got %v", err)
 	}
 	err = c.Replace(bar)
-	checkErr(err, "replaced(foo): %v", err)
+	checkErr(t, err, "replaced(foo): %v", err)
 
 	// GetMulti
 	m, err := c.GetMulti([]string{"foo", "bar"})
-	checkErr(err, "GetMulti: %v", err)
+	checkErr(t, err, "GetMulti: %v", err)
 	if g, e := len(m), 2; g != e {
 		t.Errorf("GetMulti: got len(map) = %d, want = %d", g, e)
 	}
@@ -141,7 +142,7 @@ func testWithClient(t *testing.T, c *Client) {
 
 	// Delete
 	err = c.Delete("foo")
-	checkErr(err, "Delete: %v", err)
+	checkErr(t, err, "Delete: %v", err)
 	it, err = c.Get("foo")
 	if err != ErrCacheMiss {
 		t.Errorf("post-Delete want ErrCacheMiss, got %v", err)
@@ -150,17 +151,17 @@ func testWithClient(t *testing.T, c *Client) {
 	// Incr/Decr
 	mustSet(&Item{Key: "num", Value: []byte("42")})
 	n, err := c.Increment("num", 8)
-	checkErr(err, "Increment num + 8: %v", err)
+	checkErr(t, err, "Increment num + 8: %v", err)
 	if n != 50 {
 		t.Fatalf("Increment num + 8: want=50, got=%d", n)
 	}
 	n, err = c.Decrement("num", 49)
-	checkErr(err, "Decrement: %v", err)
+	checkErr(t, err, "Decrement: %v", err)
 	if n != 1 {
 		t.Fatalf("Decrement 49: want=1, got=%d", n)
 	}
 	err = c.Delete("num")
-	checkErr(err, "delete num: %v", err)
+	checkErr(t, err, "delete num: %v", err)
 	n, err = c.Increment("num", 1)
 	if err != ErrCacheMiss {
 		t.Fatalf("increment post-delete: want ErrCacheMiss, got %v", err)
@@ -174,7 +175,7 @@ func testWithClient(t *testing.T, c *Client) {
 
 	// Test Delete All
 	err = c.DeleteAll()
-	checkErr(err, "DeleteAll: %v", err)
+	checkErr(t, err, "DeleteAll: %v", err)
 	it, err = c.Get("bar")
 	if err != ErrCacheMiss {
 		t.Errorf("post-DeleteAll want ErrCacheMiss, got %v", err)
