@@ -172,6 +172,25 @@ func testWithClient(t *testing.T, c *Client) {
 	}
 	testTouchWithClient(t, c)
 
+	// Version
+	versions, err := c.Version()
+	if n := len(versions); err != nil || n == 0 {
+		t.Errorf("Version: didn't get version")
+	}
+
+	// Stats
+	stats, err := c.Stats()
+	if n := len(stats); err != nil || n == 0 {
+		t.Errorf("Stats: didn't get stats")
+	}
+
+	// Test Version and Stats
+	for addr, stat := range stats {
+		if versions[addr] != stat["version"] {
+			t.Errorf("Both Version and Stats[version] expected %v", stat["version"])
+		}
+	}
+
 	// Test Delete All
 	err = c.DeleteAll()
 	checkErr(err, "DeleteAll: %v", err)

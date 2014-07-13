@@ -297,6 +297,33 @@ func (c *Client) FlushAll() error {
 	return c.selector.Each(c.flushAllFromAddr)
 }
 
+// Version returns the memcached version from all servers.
+func (c *Client) Version() (map[net.Addr]string, error) {
+	var mu sync.Mutex
+	versions := make(map[net.Addr]string)
+	ch := make(chan error, buffered)
+	sn := 0
+	c.selector.Each(func(addr net.Addr) error {
+		sn += 1
+		go func() {
+			ch <- c.versionFromAddr(addr, func(result string) {
+				mu.Lock()
+				defer mu.Unlock()
+				versions[addr] = result
+			})
+		}()
+		return nil
+	})
+
+	var err error
+	for i := 0; i < sn; i++ {
+		if ge := <-ch; ge != nil {
+			err = ge
+		}
+	}
+	return versions, err
+}
+
 // Get gets the item for the given key. ErrCacheMiss is returned for a
 // memcache cache miss. The key must be at most 250 bytes in length.
 func (c *Client) Get(key string) (item *Item, err error) {
@@ -317,6 +344,33 @@ func (c *Client) Touch(key string, seconds int32) (err error) {
 	return c.withKeyAddr(key, func(addr net.Addr) error {
 		return c.touchFromAddr(addr, []string{key}, seconds)
 	})
+}
+
+// Stats returns the stats from all servers.
+func (c *Client) Stats() (map[net.Addr]map[string]string, error) {
+	var mu sync.Mutex
+	stats := make(map[net.Addr]map[string]string)
+	ch := make(chan error, buffered)
+	sn := 0
+	c.selector.Each(func(addr net.Addr) error {
+		sn += 1
+		go func() {
+			ch <- c.statsFromAddr(addr, func(stat map[string]string) {
+				mu.Lock()
+				defer mu.Unlock()
+				stats[addr] = stat
+			})
+		}()
+		return nil
+	})
+
+	var err error
+	for i := 0; i < sn; i++ {
+		if ge := <-ch; ge != nil {
+			err = ge
+		}
+	}
+	return stats, err
 }
 
 func (c *Client) withKeyAddr(key string, fn func(net.Addr) error) (err error) {
@@ -405,6 +459,58 @@ func (c *Client) touchFromAddr(addr net.Addr, keys []string, expiration int32) e
 				return fmt.Errorf("memcache: unexpected response line from touch: %q", string(line))
 			}
 		}
+		return nil
+	})
+}
+
+func (c *Client) versionFromAddr(addr net.Addr, cb func(string)) error {
+	return c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
+		if _, err := fmt.Fprintf(rw, "version\r\n"); err != nil {
+			return err
+		}
+		if err := rw.Flush(); err != nil {
+			return err
+		}
+		line, err := rw.ReadString('\n')
+		if err != nil {
+			return err
+		}
+		if strings.Contains(line, "ERROR") {
+			return fmt.Errorf("memcached version error: %s", strings.TrimSpace(line))
+		}
+		s := strings.SplitN(strings.TrimRight(line, "\r\n"), " ", 2)
+		cb(s[1])
+		return nil
+	})
+}
+
+func (c *Client) statsFromAddr(addr net.Addr, cb func(map[string]string)) error {
+	return c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
+		if _, err := fmt.Fprintf(rw, "stats\r\n"); err != nil {
+			return err
+		}
+		if err := rw.Flush(); err != nil {
+			return err
+		}
+		line, err := rw.ReadString('\n')
+		if err != nil {
+			return err
+		}
+		if strings.Contains(line, "ERROR") {
+			return fmt.Errorf("memcached stats error: %s", strings.TrimSpace(line))
+		}
+		stats := make(map[string]string)
+		for err == nil && !strings.HasPrefix(line, "END") {
+			s := strings.SplitN(line, " ", 3)
+			if len(s) == 3 && s[0] == "STAT" {
+				stats[s[1]] = strings.TrimSpace(s[2])
+			}
+			line, err = rw.ReadString('\n')
+		}
+		if err != nil {
+			return err
+		}
+		cb(stats)
 		return nil
 	})
 }
