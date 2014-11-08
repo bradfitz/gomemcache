@@ -26,7 +26,8 @@ import (
 // ServerSelector is the interface that selects a memcache server
 // as a function of the item's key.
 //
-// All ServerSelector implementations must be threadsafe.
+// All ServerSelector implementations must be safe for concurrent use
+// by multiple goroutines.
 type ServerSelector interface {
 	// PickServer returns the server address that a given item
 	// should be shared onto.
@@ -36,12 +37,12 @@ type ServerSelector interface {
 
 // ServerList is a simple ServerSelector. Its zero value is usable.
 type ServerList struct {
-	lk    sync.RWMutex
+	mu    sync.RWMutex
 	addrs []net.Addr
 }
 
 // SetServers changes a ServerList's set of servers at runtime and is
-// threadsafe.
+// safe for concurrent use by multiple goroutines.
 //
 // Each server is given equal weight. A server is given more weight
 // if it's listed multiple times.
@@ -67,16 +68,16 @@ func (ss *ServerList) SetServers(servers ...string) error {
 		}
 	}
 
-	ss.lk.Lock()
-	defer ss.lk.Unlock()
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
 	ss.addrs = naddr
 	return nil
 }
 
 // Each iterates over each server calling the given function
 func (ss *ServerList) Each(f func(net.Addr) error) error {
-	ss.lk.RLock()
-	defer ss.lk.RUnlock()
+	ss.mu.RLock()
+	defer ss.mu.RUnlock()
 	for _, a := range ss.addrs {
 		if err := f(a); nil != err {
 			return err
@@ -86,8 +87,8 @@ func (ss *ServerList) Each(f func(net.Addr) error) error {
 }
 
 func (ss *ServerList) PickServer(key string) (net.Addr, error) {
-	ss.lk.RLock()
-	defer ss.lk.RUnlock()
+	ss.mu.RLock()
+	defer ss.mu.RUnlock()
 	if len(ss.addrs) == 0 {
 		return nil, ErrNoServers
 	}
