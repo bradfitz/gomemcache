@@ -278,7 +278,11 @@ func (c *Client) getConn(addr net.Addr) (*conn, error) {
 }
 
 func (c *Client) onItem(item *Item, fn func(*Client, *bufio.ReadWriter, *Item) error) error {
-	addr, err := c.selector.PickServer(item.Key)
+	return c.onItemWithHashKey(item.Key, item, fn)
+}
+
+func (c *Client) onItemWithHashKey(hashkey string, item *Item, fn func(*Client, *bufio.ReadWriter, *Item) error) error {
+	addr, err := c.selector.PickServer(hashkey)
 	if err != nil {
 		return err
 	}
@@ -292,17 +296,22 @@ func (c *Client) onItem(item *Item, fn func(*Client, *bufio.ReadWriter, *Item) e
 	}
 	return nil
 }
-
 func (c *Client) FlushAll() error {
 	return c.selector.Each(c.flushAllFromAddr)
 }
 
 // Get gets the item for the given key. ErrCacheMiss is returned for a
 // memcache cache miss. The key must be at most 250 bytes in length.
-func (c *Client) Get(key string) (item *Item, err error) {
-	err = c.withKeyAddr(key, func(addr net.Addr) error {
-		return c.getFromAddr(addr, []string{key}, func(it *Item) { item = it })
-	})
+func (c *Client) Get(key string) (*Item, error) {
+	return c.GetWithHashKey(key, key)
+}
+
+// Get gets the item for the given key. ErrCacheMiss is returned for a
+// memcache cache miss. The key must be at most 250 bytes in length.
+func (c *Client) GetWithHashKey(hashkey, key string) (item *Item, err error) {
+	err = c.withKeyAddrByHashKey(hashkey, key, func(addr net.Addr) error {
+			return c.getFromAddr(addr, []string{key}, func(it *Item) { item = it })
+		})
 	if err == nil && item == nil {
 		err = ErrCacheMiss
 	}
@@ -318,12 +327,20 @@ func (c *Client) Touch(key string, seconds int32) (err error) {
 		return c.touchFromAddr(addr, []string{key}, seconds)
 	})
 }
-
+func (c *Client) TouchWithHashKey(hashkey, key string, seconds int32) (err error) {
+	return c.withKeyAddrByHashKey(hashkey, key, func(addr net.Addr) error {
+			return c.touchFromAddr(addr, []string{key}, seconds)
+		})
+}
 func (c *Client) withKeyAddr(key string, fn func(net.Addr) error) (err error) {
+	return c.withKeyAddrByHashKey(key, key, fn)
+}
+
+func (c *Client) withKeyAddrByHashKey(hashkey, key string, fn func(net.Addr) error) (err error) {
 	if !legalKey(key) {
 		return ErrMalformedKey
 	}
-	addr, err := c.selector.PickServer(key)
+	addr, err := c.selector.PickServer(hashkey)
 	if err != nil {
 		return err
 	}
@@ -340,9 +357,12 @@ func (c *Client) withAddrRw(addr net.Addr, fn func(*bufio.ReadWriter) error) (er
 }
 
 func (c *Client) withKeyRw(key string, fn func(*bufio.ReadWriter) error) error {
-	return c.withKeyAddr(key, func(addr net.Addr) error {
-		return c.withAddrRw(addr, fn)
-	})
+	return c.withKeyRwByHashKey(key, key, fn)
+}
+func (c *Client) withKeyRwByHashKey(hashkey, key string, fn func(*bufio.ReadWriter) error) error {
+	return c.withKeyAddrByHashKey(hashkey, key, func(addr net.Addr) error {
+			return c.withAddrRw(addr, fn)
+		})
 }
 
 func (c *Client) getFromAddr(addr net.Addr, keys []string, cb func(*Item)) error {
@@ -499,6 +519,10 @@ func (c *Client) Set(item *Item) error {
 	return c.onItem(item, (*Client).set)
 }
 
+// Set writes the given item, unconditionally.
+func (c *Client) SetWithHashKey(hashkey string, item *Item) error {
+	return c.onItemWithHashKey(hashkey, item, (*Client).set)
+}
 func (c *Client) set(rw *bufio.ReadWriter, item *Item) error {
 	return c.populateOne(rw, "set", item)
 }
@@ -506,7 +530,10 @@ func (c *Client) set(rw *bufio.ReadWriter, item *Item) error {
 // Add writes the given item, if no value already exists for its
 // key. ErrNotStored is returned if that condition is not met.
 func (c *Client) Add(item *Item) error {
-	return c.onItem(item, (*Client).add)
+	return c.AddWithHashKey(item.Key, item)
+}
+func (c *Client) AddWithHashKey(hashkey string, item *Item) error {
+	return c.onItemWithHashKey(hashkey, item, (*Client).add)
 }
 
 func (c *Client) add(rw *bufio.ReadWriter, item *Item) error {
@@ -515,8 +542,11 @@ func (c *Client) add(rw *bufio.ReadWriter, item *Item) error {
 
 // Replace writes the given item, but only if the server *does*
 // already hold data for this key
-func (c *Client) Replace(item *Item) error {
-	return c.onItem(item, (*Client).replace)
+func (c *Client) Replace(hashkey string, item *Item) error {
+	return c.ReplaceWithHashKey(hashkey, item)
+}
+func (c *Client) ReplaceWithHashKey(hashkey string, item *Item) error {
+	return c.onItemWithHashKey(hashkey, item, (*Client).replace)
 }
 
 func (c *Client) replace(rw *bufio.ReadWriter, item *Item) error {
