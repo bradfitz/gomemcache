@@ -542,8 +542,8 @@ func (c *Client) add(rw *bufio.ReadWriter, item *Item) error {
 
 // Replace writes the given item, but only if the server *does*
 // already hold data for this key
-func (c *Client) Replace(hashkey string, item *Item) error {
-	return c.ReplaceWithHashKey(hashkey, item)
+func (c *Client) Replace(item *Item) error {
+	return c.ReplaceWithHashKey(item.Key, item)
 }
 func (c *Client) ReplaceWithHashKey(hashkey string, item *Item) error {
 	return c.onItemWithHashKey(hashkey, item, (*Client).replace)
