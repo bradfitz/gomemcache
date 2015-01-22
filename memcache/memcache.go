@@ -648,6 +648,11 @@ func (c *Client) Delete(key string) error {
 		return writeExpectf(rw, resultDeleted, "delete %s\r\n", key)
 	})
 }
+func (c *Client) DeleteWithHashKey(hashkey, key string) error {
+	return c.withKeyRwByHashKey(hashkey, key, func(rw *bufio.ReadWriter) error {
+			return writeExpectf(rw, resultDeleted, "delete %s\r\n", key)
+		})
+}
 
 // DeleteAll deletes all items in the cache.
 func (c *Client) DeleteAll() error {
