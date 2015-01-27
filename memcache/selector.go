@@ -91,8 +91,7 @@ func (ss *ServerList) Each(f func(net.Addr) error) error {
 // copies, which at least are bounded in size and small)
 var keyBufPool = sync.Pool{
 	New: func() interface{} {
-		b := make([]byte, 256)
-		return &b
+		return make([]byte, 256)
 	},
 }
 
@@ -105,9 +104,9 @@ func (ss *ServerList) PickServer(key string) (net.Addr, error) {
 	if len(ss.addrs) == 1 {
 		return ss.addrs[0], nil
 	}
-	bufp := keyBufPool.Get().(*[]byte)
-	n := copy(*bufp, key)
-	cs := crc32.ChecksumIEEE((*bufp)[:n])
+	bufp := keyBufPool.Get().([]byte)
+	n := copy(bufp, key)
+	cs := crc32.ChecksumIEEE(bufp[:n])
 	keyBufPool.Put(bufp)
 
 	return ss.addrs[cs%uint32(len(ss.addrs))], nil
