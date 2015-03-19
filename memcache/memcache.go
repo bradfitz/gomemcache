@@ -110,6 +110,7 @@ var (
 	resultTouched   = []byte("TOUCHED\r\n")
 
 	resultClientErrorPrefix = []byte("CLIENT_ERROR ")
+	resultStatPrefix = []byte("STAT")
 )
 
 // New returns a memcache client using the provided server(s)
@@ -666,4 +667,59 @@ func (c *Client) incrDecr(verb, key string, delta uint64) (uint64, error) {
 		return nil
 	})
 	return val, err
+}
+
+// Stats returns the stats from all servers this client knows about.
+func (c *Client) Stats() (map[net.Addr]map[string]string, error) {
+	var mu sync.Mutex
+	stats := make(map[net.Addr]map[string]string)
+	ch := make(chan error, buffered)
+	sn := 0
+	c.selector.Each(func(addr net.Addr) error {
+		sn += 1
+		go func() {
+			ch <- c.statsFromAddr(addr, func(stat map[string]string) {
+				mu.Lock()
+				defer mu.Unlock()
+				stats[addr] = stat
+			})
+		}()
+		return nil
+	})
+
+	var err error
+	for i := 0; i < sn; i++ {
+		if ge := <-ch; ge != nil {
+			err = ge
+		}
+	}
+	return stats, err
+}
+
+func (c *Client) statsFromAddr(addr net.Addr, cb func(map[string]string)) error {
+	return c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
+		line, err := writeReadLine(rw, "stats\r\n")
+		if err != nil {
+			return err
+		}
+
+		if bytes.HasPrefix(line, resultClientErrorPrefix) {
+			errMsg := line[len(resultClientErrorPrefix) : len(line)-2]
+			return errors.New("memcache: client error: " + string(errMsg))
+		}
+
+		stats := make(map[string]string)
+		for err == nil && !bytes.Equal(line, resultEnd) {
+			s := bytes.Split(line, []byte(" "))
+			if len(s) == 3 && bytes.HasPrefix(s[0], resultStatPrefix) {
+				stats[string(s[1])] = string(bytes.TrimSpace(s[2]))
+			}
+			line, err = rw.ReadSlice('\n')
+		}
+		if err != nil {
+			return err
+		}
+		cb(stats)
+		return nil
+	})
 }
