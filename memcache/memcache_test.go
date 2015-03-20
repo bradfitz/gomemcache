@@ -180,6 +180,12 @@ func testWithClient(t *testing.T, c *Client) {
 		t.Errorf("post-DeleteAll want ErrCacheMiss, got %v", err)
 	}
 
+	// Stats
+	stats, err := c.Stats()
+	if n := len(stats); err != nil || n == 0 {
+		t.Errorf("Stats didn't get any statistics")
+	}
+
 }
 
 func testTouchWithClient(t *testing.T, c *Client) {
