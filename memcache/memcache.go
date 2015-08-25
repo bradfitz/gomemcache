@@ -68,8 +68,8 @@ var (
 const DefaultTimeout = 100 * time.Millisecond
 
 const (
-	buffered            = 8 // arbitrary buffered channel size, for readability
-	maxIdleConnsPerAddr = 2 // TODO(bradfitz): make this configurable?
+	buffered            = 8  // arbitrary buffered channel size, for readability
+	maxIdleConnsPerAddr = 25 // TODO(bradfitz): make this configurable?
 )
 
 // resumableError returns true if err is only a protocol-level cache error.
