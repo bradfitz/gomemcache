@@ -76,24 +76,37 @@ func mustSetF(t *testing.T, c *Client) func(*Item) {
 	}
 }
 
-func testWithClient(t *testing.T, c *Client) {
-	checkErr := func(err error, format string, args ...interface{}) {
-		if err != nil {
-			t.Fatalf(format, args...)
-		}
+func checkErr(t *testing.T, err error, format string, args ...interface{}) {
+	if err != nil {
+		t.Fatalf(format, args...)
 	}
-	mustSet := mustSetF(t, c)
+}
 
+func testWithClient(t *testing.T, c *Client) {
+	testSetWithClient(t, c)
+	testGetWithClient(t, c)
+	testAddWithClient(t, c)
+	testReplaceWithClient(t, c)
+	testGetMultiWithClient(t, c)
+	testDeleteWithClient(t, c)
+	testIncrDecrWithClient(t, c)
+	testTouchWithClient(t, c)
+	testDeleteAllWithClient(t, c)
+}
+
+func testSetWithClient(t *testing.T, c *Client) {
 	// Set
 	foo := &Item{Key: "foo", Value: []byte("fooval"), Flags: 123}
 	err := c.Set(foo)
-	checkErr(err, "first set(foo): %v", err)
+	checkErr(t, err, "first set(foo): %v", err)
 	err = c.Set(foo)
-	checkErr(err, "second set(foo): %v", err)
+	checkErr(t, err, "second set(foo): %v", err)
+}
 
+func testGetWithClient(t *testing.T, c *Client) {
 	// Get
 	it, err := c.Get("foo")
-	checkErr(err, "get(foo): %v", err)
+	checkErr(t, err, "get(foo): %v", err)
 	if it.Key != "foo" {
 		t.Errorf("get(foo) Key = %q, want foo", it.Key)
 	}
@@ -103,26 +116,33 @@ func testWithClient(t *testing.T, c *Client) {
 	if it.Flags != 123 {
 		t.Errorf("get(foo) Flags = %v, want 123", it.Flags)
 	}
+}
 
+func testAddWithClient(t *testing.T, c *Client) {
 	// Add
 	bar := &Item{Key: "bar", Value: []byte("barval")}
-	err = c.Add(bar)
-	checkErr(err, "first add(foo): %v", err)
+	err := c.Add(bar)
+	checkErr(t, err, "first add(foo): %v", err)
 	if err := c.Add(bar); err != ErrNotStored {
 		t.Fatalf("second add(foo) want ErrNotStored, got %v", err)
 	}
+}
 
+func testReplaceWithClient(t *testing.T, c *Client) {
 	// Replace
+	bar := &Item{Key: "bar", Value: []byte("barval")}
 	baz := &Item{Key: "baz", Value: []byte("bazvalue")}
 	if err := c.Replace(baz); err != ErrNotStored {
 		t.Fatalf("expected replace(baz) to return ErrNotStored, got %v", err)
 	}
-	err = c.Replace(bar)
-	checkErr(err, "replaced(foo): %v", err)
+	err := c.Replace(bar)
+	checkErr(t, err, "replaced(foo): %v", err)
+}
 
+func testGetMultiWithClient(t *testing.T, c *Client) {
 	// GetMulti
 	m, err := c.GetMulti([]string{"foo", "bar"})
-	checkErr(err, "GetMulti: %v", err)
+	checkErr(t, err, "GetMulti: %v", err)
 	if g, e := len(m), 2; g != e {
 		t.Errorf("GetMulti: got len(map) = %d, want = %d", g, e)
 	}
@@ -138,29 +158,34 @@ func testWithClient(t *testing.T, c *Client) {
 	if g, e := string(m["bar"].Value), "barval"; g != e {
 		t.Errorf("GetMulti: bar: got %q, want %q", g, e)
 	}
+}
 
+func testDeleteWithClient(t *testing.T, c *Client) {
 	// Delete
-	err = c.Delete("foo")
-	checkErr(err, "Delete: %v", err)
-	it, err = c.Get("foo")
+	err := c.Delete("foo")
+	checkErr(t, err, "Delete: %v", err)
+	_, err = c.Get("foo")
 	if err != ErrCacheMiss {
 		t.Errorf("post-Delete want ErrCacheMiss, got %v", err)
 	}
+}
 
+func testIncrDecrWithClient(t *testing.T, c *Client) {
 	// Incr/Decr
+	mustSet := mustSetF(t, c)
 	mustSet(&Item{Key: "num", Value: []byte("42")})
 	n, err := c.Increment("num", 8)
-	checkErr(err, "Increment num + 8: %v", err)
+	checkErr(t, err, "Increment num + 8: %v", err)
 	if n != 50 {
 		t.Fatalf("Increment num + 8: want=50, got=%d", n)
 	}
 	n, err = c.Decrement("num", 49)
-	checkErr(err, "Decrement: %v", err)
+	checkErr(t, err, "Decrement: %v", err)
 	if n != 1 {
 		t.Fatalf("Decrement 49: want=1, got=%d", n)
 	}
 	err = c.Delete("num")
-	checkErr(err, "delete num: %v", err)
+	checkErr(t, err, "delete num: %v", err)
 	n, err = c.Increment("num", 1)
 	if err != ErrCacheMiss {
 		t.Fatalf("increment post-delete: want ErrCacheMiss, got %v", err)
@@ -170,16 +195,6 @@ func testWithClient(t *testing.T, c *Client) {
 	if err == nil || !strings.Contains(err.Error(), "client error") {
 		t.Fatalf("increment non-number: want client error, got %v", err)
 	}
-	testTouchWithClient(t, c)
-
-	// Test Delete All
-	err = c.DeleteAll()
-	checkErr(err, "DeleteAll: %v", err)
-	it, err = c.Get("bar")
-	if err != ErrCacheMiss {
-		t.Errorf("post-DeleteAll want ErrCacheMiss, got %v", err)
-	}
-
 }
 
 func testTouchWithClient(t *testing.T, c *Client) {
@@ -226,5 +241,15 @@ func testTouchWithClient(t *testing.T, c *Client) {
 		if err != ErrCacheMiss {
 			t.Fatalf("unexpected error retrieving bar: %v", err.Error())
 		}
+	}
+}
+
+func testDeleteAllWithClient(t *testing.T, c *Client) {
+	// Test Delete All
+	err := c.DeleteAll()
+	checkErr(t, err, "DeleteAll: %v", err)
+	_, err = c.Get("bar")
+	if err != ErrCacheMiss {
+		t.Errorf("post-DeleteAll want ErrCacheMiss, got %v", err)
 	}
 }
