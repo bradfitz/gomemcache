@@ -228,3 +228,13 @@ func testTouchWithClient(t *testing.T, c *Client) {
 		}
 	}
 }
+
+func TestCreateClientWithOpts(t *testing.T) {
+	client := NewFromSelector(nil, SetBufferSize(3), SetMaxIdleConnsPerAddr(4))
+	if client.bufferSize != 3 {
+		t.Fatalf("set buffer size failure")
+	}
+	if client.maxIdleConnsPerAddr != 4 {
+		t.Fatalf("set max idle conns per addr failure")
+	}
+}

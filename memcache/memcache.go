@@ -49,7 +49,7 @@ var (
 	// CompareAndSwap) failed because the condition was not satisfied.
 	ErrNotStored = errors.New("memcache: item not stored")
 
-	// ErrServer means that a server error occurred.
+	// ErrServerError means that a server error occurred.
 	ErrServerError = errors.New("memcache: server error")
 
 	// ErrNoStats means that no statistics were available.
@@ -68,8 +68,8 @@ var (
 const DefaultTimeout = 100 * time.Millisecond
 
 const (
-	buffered            = 8 // arbitrary buffered channel size, for readability
-	maxIdleConnsPerAddr = 2 // TODO(bradfitz): make this configurable?
+	defaultBufferSize          = 8
+	defaultMaxIdleConnsPerAddr = 2
 )
 
 // resumableError returns true if err is only a protocol-level cache error.
@@ -112,6 +112,20 @@ var (
 	resultClientErrorPrefix = []byte("CLIENT_ERROR ")
 )
 
+// SetBufferSize sets arbitrary buffered channel size, for readability, as a optional
+func SetBufferSize(bufferSize int) func(*Client) {
+	return func(c *Client) {
+		c.bufferSize = bufferSize
+	}
+}
+
+// SetMaxIdleConnsPerAddr sets max idle connection number per addr, as a optional
+func SetMaxIdleConnsPerAddr(maxIdleConnsPerAddr int) func(*Client) {
+	return func(c *Client) {
+		c.maxIdleConnsPerAddr = maxIdleConnsPerAddr
+	}
+}
+
 // New returns a memcache client using the provided server(s)
 // with equal weight. If a server is listed multiple times,
 // it gets a proportional amount of weight.
@@ -122,8 +136,16 @@ func New(server ...string) *Client {
 }
 
 // NewFromSelector returns a new Client using the provided ServerSelector.
-func NewFromSelector(ss ServerSelector) *Client {
-	return &Client{selector: ss}
+func NewFromSelector(ss ServerSelector, opts ...func(*Client)) *Client {
+	c := &Client{
+		selector:            ss,
+		bufferSize:          defaultBufferSize,
+		maxIdleConnsPerAddr: defaultMaxIdleConnsPerAddr,
+	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
 // Client is a memcache client.
@@ -132,6 +154,12 @@ type Client struct {
 	// Timeout specifies the socket read/write timeout.
 	// If zero, DefaultTimeout is used.
 	Timeout time.Duration
+
+	// max idle connections per addr
+	maxIdleConnsPerAddr int
+
+	// arbitrary buffered channel size, for readability
+	bufferSize int
 
 	selector ServerSelector
 
@@ -196,7 +224,7 @@ func (c *Client) putFreeConn(addr net.Addr, cn *conn) {
 		c.freeconn = make(map[string][]*conn)
 	}
 	freelist := c.freeconn[addr.String()]
-	if len(freelist) >= maxIdleConnsPerAddr {
+	if len(freelist) >= c.maxIdleConnsPerAddr {
 		cn.nc.Close()
 		return
 	}
@@ -290,6 +318,7 @@ func (c *Client) onItem(item *Item, fn func(*Client, *bufio.ReadWriter, *Item) e
 	return nil
 }
 
+// FlushAll send flush-all to all addrs
 func (c *Client) FlushAll() error {
 	return c.selector.Each(c.flushAllFromAddr)
 }
@@ -431,7 +460,7 @@ func (c *Client) GetMulti(keys []string) (map[string]*Item, error) {
 		keyMap[addr] = append(keyMap[addr], key)
 	}
 
-	ch := make(chan error, buffered)
+	ch := make(chan error, c.bufferSize)
 	for addr, keys := range keyMap {
 		go func(addr net.Addr, keys []string) {
 			ch <- c.getFromAddr(addr, keys, addItemToMap)
