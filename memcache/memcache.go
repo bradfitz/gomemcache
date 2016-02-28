@@ -23,7 +23,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 
 	"strconv"
@@ -111,6 +110,17 @@ var (
 
 	resultClientErrorPrefix = []byte("CLIENT_ERROR ")
 )
+
+// bufferPool is a pool of buffers used to read from the io.Reader handled in parseGetResponse
+var bufferPool = sync.Pool{
+	New: func() interface{} { return new(bytes.Buffer) },
+}
+
+// freeBuffer saves used buffer; avoids an allocation per invocation.
+func freeBuffer(buf *bytes.Buffer) {
+	buf.Reset()
+	bufferPool.Put(buf)
+}
 
 // New returns a memcache client using the provided server(s)
 // with equal weight. If a server is listed multiple times,
@@ -463,10 +473,14 @@ func parseGetResponse(r *bufio.Reader, cb func(*Item)) error {
 		if err != nil {
 			return err
 		}
-		it.Value, err = ioutil.ReadAll(io.LimitReader(r, int64(size)+2))
+		buf := bufferPool.Get().(*bytes.Buffer)
+		_, err = buf.ReadFrom(io.LimitReader(r, int64(size)+2))
 		if err != nil {
+			freeBuffer(buf)
 			return err
 		}
+		it.Value = buf.Bytes()
+		freeBuffer(buf)
 		if !bytes.HasSuffix(it.Value, crlf) {
 			return fmt.Errorf("memcache: corrupt get result read")
 		}
