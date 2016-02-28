@@ -19,6 +19,7 @@ package memcache
 
 import (
 	"fmt"
+	"math/rand"
 	"net"
 	"os"
 	"os/exec"
@@ -226,5 +227,53 @@ func testTouchWithClient(t *testing.T, c *Client) {
 		if err != ErrCacheMiss {
 			t.Fatalf("unexpected error retrieving bar: %v", err.Error())
 		}
+	}
+}
+
+func BenchmarkGet(b *testing.B) {
+	b.ReportAllocs()
+
+	// Create memcache items
+	items := []*Item{
+		&Item{
+			Expiration: 0,
+			Key:        "gomemcache_benchmark_localhost_key_100",
+			Value:      make([]byte, 100),
+		},
+		&Item{
+			Expiration: 0,
+			Key:        "gomemcache_benchmark_localhost_key_1000",
+			Value:      make([]byte, 1000),
+		},
+		&Item{
+			Expiration: 0,
+			Key:        "gomemcache_benchmark_localhost_key_10000",
+			Value:      make([]byte, 10000),
+		},
+		&Item{
+			Expiration: 0,
+			Key:        "gomemcache_benchmark_localhost_key_100000",
+			Value:      make([]byte, 100000),
+		},
+	}
+
+	// Create memcache client
+	c := New(testServer)
+
+	// Set items
+	for _, i := range items {
+		c.Set(i)
+	}
+
+	// Run
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			c.Get(items[rand.Intn(len(items))].Key)
+		}
+	})
+
+	// Make sure the test keys are deleted
+	for _, i := range items {
+		c.Delete(i.Key)
 	}
 }
