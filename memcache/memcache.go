@@ -664,3 +664,41 @@ func (c *Client) incrDecr(verb, key string, delta uint64) (uint64, error) {
 	})
 	return val, err
 }
+
+// Retrieve statistics from the connected server.
+// TODO: make this work when connected to multiple servers
+func (c *Client) Stats() (stats map[string]string, err error) {
+	fmt.Println("getting stats")
+	err = c.withKeyAddr("key not important", func(addr net.Addr) error {
+		return c.statsFromAddr(addr, func(s *map[string]string) { stats = s })
+	})
+	return stats, err
+}
+
+func (c *Client) statsFromAddr(addr net.Addr, cb func(*map[string]string)) error {
+	return c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
+		if _, err := fmt.Fprintf(rw, "stats\r\n"); err != nil {
+			return err
+		}
+		if err := rw.Flush(); err != nil {
+			return err
+		}
+		stats := make(map[string]string)
+		for {
+			line, err := rw.Reader.ReadSlice('\n')
+			if err != nil {
+				return err
+			}
+			if bytes.Equal(line, resultEnd) {
+				break
+			}
+			kv := strings.SplitN(string(line), " ", 2)
+			stats[kv[0]] := kv[1]
+			if !bytes.HasSuffix(it.Value, crlf) {
+				return fmt.Errorf("memcache: corrupt get result read")
+			}
+		}
+		cb(stats)
+		return nil
+	})
+}
