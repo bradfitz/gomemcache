@@ -23,7 +23,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 
 	"strconv"
@@ -463,7 +462,8 @@ func parseGetResponse(r *bufio.Reader, cb func(*Item)) error {
 		if err != nil {
 			return err
 		}
-		it.Value, err = ioutil.ReadAll(io.LimitReader(r, int64(size)+2))
+		it.Value = make([]byte, int64(size)+2)
+		_, err = io.ReadFull(r, it.Value)
 		if err != nil {
 			return err
 		}
