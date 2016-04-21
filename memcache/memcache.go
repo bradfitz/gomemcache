@@ -72,6 +72,20 @@ const (
 	maxIdleConnsPerAddr = 2 // TODO(bradfitz): make this configurable?
 )
 
+// Stats is a type for storing current statistics of a Memcached server
+type Stats struct {
+	// Stats are the top level key = value metrics from memcache
+	Stats map[string]string
+
+	// Slabs are indexed by slab ID.  Each has a k/v store of metrics for
+	// that slab.
+	Slabs map[int]map[string]string
+
+	// Items are indexed by slab ID.  Each ID has a k/v store of metrics for
+	// items in that slab.
+	Items map[int]map[string]string
+}
+
 // resumableError returns true if err is only a protocol-level cache error.
 // This is used to determine whether or not a server connection should
 // be re-used or not. If an error occurs, by default we don't reuse the
@@ -110,7 +124,7 @@ var (
 	resultTouched   = []byte("TOUCHED\r\n")
 
 	resultClientErrorPrefix = []byte("CLIENT_ERROR ")
-	resultStatPrefix = []byte("STAT")
+	resultStatPrefix        = []byte("STAT")
 )
 
 // New returns a memcache client using the provided server(s)
@@ -670,15 +684,15 @@ func (c *Client) incrDecr(verb, key string, delta uint64) (uint64, error) {
 }
 
 // Stats returns the stats from all servers this client knows about.
-func (c *Client) Stats() (map[net.Addr]map[string]string, error) {
+func (c *Client) Stats() (map[net.Addr]Stats, error) {
 	var mu sync.Mutex
-	stats := make(map[net.Addr]map[string]string)
+	stats := make(map[net.Addr]Stats)
 	ch := make(chan error, buffered)
 	sn := 0
 	c.selector.Each(func(addr net.Addr) error {
 		sn += 1
 		go func() {
-			ch <- c.statsFromAddr(addr, func(stat map[string]string) {
+			ch <- c.statsFromAddr(addr, func(stat Stats) {
 				mu.Lock()
 				defer mu.Unlock()
 				stats[addr] = stat
@@ -696,28 +710,64 @@ func (c *Client) Stats() (map[net.Addr]map[string]string, error) {
 	return stats, err
 }
 
-func (c *Client) statsFromAddr(addr net.Addr, cb func(map[string]string)) error {
+func (c *Client) statsFromAddr(addr net.Addr, cb func(Stats)) error {
 	return c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
-		line, err := writeReadLine(rw, "stats\r\n")
-		if err != nil {
-			return err
-		}
+		cmds := []string{"stats\r\n", "stats slabs\r\n", "stats items\r\n"}
+		var stats Stats
+		stats.Stats = make(map[string]string)
+		stats.Slabs = make(map[int]map[string]string)
+		stats.Items = make(map[int]map[string]string)
 
-		if bytes.HasPrefix(line, resultClientErrorPrefix) {
-			errMsg := line[len(resultClientErrorPrefix) : len(line)-2]
-			return errors.New("memcache: client error: " + string(errMsg))
-		}
-
-		stats := make(map[string]string)
-		for err == nil && !bytes.Equal(line, resultEnd) {
-			s := bytes.Split(line, []byte(" "))
-			if len(s) == 3 && bytes.HasPrefix(s[0], resultStatPrefix) {
-				stats[string(s[1])] = string(bytes.TrimSpace(s[2]))
+		for _, cmd := range cmds {
+			line, err := writeReadLine(rw, cmd)
+			if err != nil {
+				return err
 			}
-			line, err = rw.ReadSlice('\n')
-		}
-		if err != nil {
-			return err
+
+			if bytes.HasPrefix(line, resultClientErrorPrefix) {
+				errMsg := line[len(resultClientErrorPrefix) : len(line)-2]
+				return errors.New("memcache: client error: " + string(errMsg))
+			}
+
+			for err == nil && !bytes.Equal(line, resultEnd) {
+				s := bytes.Split(line, []byte(" "))
+				if len(s) == 3 && bytes.HasPrefix(s[0], resultStatPrefix) {
+					f := bytes.Split(s[1], []byte(":"))
+					switch len(f) {
+					case 1:
+						// Global stats
+						stats.Stats[string(s[1])] = string(bytes.TrimSpace(s[2]))
+					case 2:
+						// Slab stats
+						i, err := strconv.ParseInt(string(f[0]), 10, 64)
+						if err != nil {
+							return err
+						}
+						h, ok := stats.Slabs[int(i)]
+						if !ok {
+							h = make(map[string]string)
+							stats.Slabs[int(i)] = h
+						}
+						h[string(f[1])] = string(bytes.TrimSpace(s[2]))
+					case 3:
+						// Slab Item stats
+						i, err := strconv.ParseInt(string(f[1]), 10, 64)
+						if err != nil {
+							return err
+						}
+						h, ok := stats.Items[int(i)]
+						if !ok {
+							h = make(map[string]string)
+							stats.Items[int(i)] = h
+						}
+						h[string(f[2])] = string(bytes.TrimSpace(s[2]))
+					}
+				}
+				line, err = rw.ReadSlice('\n')
+				if err != nil {
+					return err
+				}
+			}
 		}
 		cb(stats)
 		return nil
