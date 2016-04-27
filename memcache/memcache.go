@@ -5,7 +5,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-     http://www.apache.org/licenses/LICENSE-2.0
+	 http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -68,7 +68,7 @@ var (
 const DefaultTimeout = 100 * time.Millisecond
 
 const (
-	buffered            = 8 // arbitrary buffered channel size, for readability
+	buffered			= 8 // arbitrary buffered channel size, for readability
 	maxIdleConnsPerAddr = 2 // TODO(bradfitz): make this configurable?
 )
 
@@ -97,17 +97,17 @@ func legalKey(key string) bool {
 }
 
 var (
-	crlf            = []byte("\r\n")
-	space           = []byte(" ")
-	resultOK        = []byte("OK\r\n")
-	resultStored    = []byte("STORED\r\n")
+	crlf			= []byte("\r\n")
+	space			= []byte(" ")
+	resultOK		= []byte("OK\r\n")
+	resultStored	= []byte("STORED\r\n")
 	resultNotStored = []byte("NOT_STORED\r\n")
-	resultExists    = []byte("EXISTS\r\n")
-	resultNotFound  = []byte("NOT_FOUND\r\n")
-	resultDeleted   = []byte("DELETED\r\n")
-	resultEnd       = []byte("END\r\n")
-	resultOk        = []byte("OK\r\n")
-	resultTouched   = []byte("TOUCHED\r\n")
+	resultExists	= []byte("EXISTS\r\n")
+	resultNotFound	= []byte("NOT_FOUND\r\n")
+	resultDeleted	= []byte("DELETED\r\n")
+	resultEnd		= []byte("END\r\n")
+	resultOk		= []byte("OK\r\n")
+	resultTouched	= []byte("TOUCHED\r\n")
 
 	resultClientErrorPrefix = []byte("CLIENT_ERROR ")
 )
@@ -135,7 +135,7 @@ type Client struct {
 
 	selector ServerSelector
 
-	lk       sync.Mutex
+	lk		 sync.Mutex
 	freeconn map[string][]*conn
 }
 
@@ -162,10 +162,10 @@ type Item struct {
 
 // conn is a connection to a server.
 type conn struct {
-	nc   net.Conn
-	rw   *bufio.ReadWriter
+	nc	 net.Conn
+	rw	 *bufio.ReadWriter
 	addr net.Addr
-	c    *Client
+	c	 *Client
 }
 
 // release returns this connection back to the client's free pool
@@ -179,7 +179,7 @@ func (cn *conn) extendDeadline() {
 
 // condRelease releases this connection if the error pointed to by err
 // is nil (not an error) or is only a protocol level error (e.g. a
-// cache miss).  The purpose is to not recycle TCP connections that
+// cache miss).	 The purpose is to not recycle TCP connections that
 // are bad.
 func (cn *conn) condRelease(err *error) {
 	if *err == nil || resumableError(*err) {
@@ -238,7 +238,7 @@ func (cte *ConnectTimeoutError) Error() string {
 
 func (c *Client) dial(addr net.Addr) (net.Conn, error) {
 	type connError struct {
-		cn  net.Conn
+		cn	net.Conn
 		err error
 	}
 
@@ -265,10 +265,10 @@ func (c *Client) getConn(addr net.Addr) (*conn, error) {
 		return nil, err
 	}
 	cn = &conn{
-		nc:   nc,
+		nc:	  nc,
 		addr: addr,
-		rw:   bufio.NewReadWriter(bufio.NewReader(nc), bufio.NewWriter(nc)),
-		c:    c,
+		rw:	  bufio.NewReadWriter(bufio.NewReader(nc), bufio.NewWriter(nc)),
+		c:	  c,
 	}
 	cn.extendDeadline()
 	return cn, nil
@@ -298,7 +298,7 @@ func (c *Client) FlushAll() error {
 // memcache cache miss. The key must be at most 250 bytes in length.
 func (c *Client) Get(key string) (item *Item, err error) {
 	err = c.withKeyAddr(key, func(addr net.Addr) error {
-		return c.getFromAddr(addr, []string{key}, func(it *Item) { item = it })
+		return c.getFromAddrSingle(addr, key, func(it *Item) { item = it })
 	})
 	if err == nil && item == nil {
 		err = ErrCacheMiss
@@ -339,6 +339,21 @@ func (c *Client) withAddrRw(addr net.Addr, fn func(*bufio.ReadWriter) error) (er
 func (c *Client) withKeyRw(key string, fn func(*bufio.ReadWriter) error) error {
 	return c.withKeyAddr(key, func(addr net.Addr) error {
 		return c.withAddrRw(addr, fn)
+	})
+}
+
+func (c *Client) getFromAddrSingle(addr net.Addr, key string, cb func(*Item)) error {
+	return c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
+		if _, err := fmt.Fprintf(rw, "get %s\r\n", key); err != nil {
+			return err
+		}
+		if err := rw.Flush(); err != nil {
+			return err
+		}
+		if err := parseGetResponse(rw.Reader, cb); err != nil {
+			return err
+		}
+		return nil
 	})
 }
 
