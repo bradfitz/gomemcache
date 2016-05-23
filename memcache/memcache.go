@@ -203,6 +203,15 @@ func (c *Client) putFreeConn(addr net.Addr, cn *conn) {
 	c.freeconn[addr.String()] = append(freelist, cn)
 }
 
+// Close all open connections
+func (c *Client) Close() {
+	for _, freelist := range c.freeconn {
+		for _, conn := range freelist {
+			conn.nc.Close()
+		}
+	}
+}
+
 func (c *Client) getFreeConn(addr net.Addr) (cn *conn, ok bool) {
 	c.lk.Lock()
 	defer c.lk.Unlock()
