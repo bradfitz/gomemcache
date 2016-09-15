@@ -27,6 +27,8 @@ import (
 	"math"
 	"net"
 
+	"gopkg.in/fatih/pool.v2"
+
 	"strconv"
 	"strings"
 	"sync"
@@ -125,7 +127,7 @@ func New(server ...string) *Client {
 
 // NewFromSelector returns a new Client using the provided ServerSelector.
 func NewFromSelector(ss ServerSelector) *Client {
-	return &Client{selector: ss}
+	return &Client{selector: ss, pools: make(map[string]pool.Pool)}
 }
 
 // Client is a memcache client.
@@ -137,8 +139,8 @@ type Client struct {
 
 	selector ServerSelector
 
-	lk       sync.Mutex
-	freeconn map[string][]*conn
+	lk    sync.Mutex
+	pools map[string]pool.Pool
 }
 
 // Item is an item to be got or stored in a memcached server.
@@ -164,7 +166,7 @@ type Item struct {
 
 // conn is a connection to a server.
 type conn struct {
-	nc   net.Conn
+	nc   *pool.PoolConn
 	rw   *bufio.ReadWriter
 	addr net.Addr
 	c    *Client
@@ -191,33 +193,25 @@ func (cn *conn) condRelease(err *error) {
 	}
 }
 
-func (c *Client) putFreeConn(addr net.Addr, cn *conn) {
-	c.lk.Lock()
-	defer c.lk.Unlock()
-	if c.freeconn == nil {
-		c.freeconn = make(map[string][]*conn)
+func (c *Client) withAddrPool(addr net.Addr, fn func(pool.Pool)) {
+	pl := c.pools[addr.String()]
+	if pl == nil {
+		c.lk.Lock()
+		// See if pool is still nil
+		if c.pools[addr.String()] == nil {
+			pl, _ = pool.NewChannelPool(1, 10, func() (net.Conn, error) {
+				return c.dial(addr)
+			})
+			c.pools[addr.String()] = pl
+		}
+		c.lk.Unlock()
+		pl = c.pools[addr.String()]
 	}
-	freelist := c.freeconn[addr.String()]
-	if len(freelist) >= maxIdleConnsPerAddr {
-		cn.nc.Close()
-		return
-	}
-	c.freeconn[addr.String()] = append(freelist, cn)
+	fn(pl)
 }
 
-func (c *Client) getFreeConn(addr net.Addr) (cn *conn, ok bool) {
-	c.lk.Lock()
-	defer c.lk.Unlock()
-	if c.freeconn == nil {
-		return nil, false
-	}
-	freelist, ok := c.freeconn[addr.String()]
-	if !ok || len(freelist) == 0 {
-		return nil, false
-	}
-	cn = freelist[len(freelist)-1]
-	c.freeconn[addr.String()] = freelist[:len(freelist)-1]
-	return cn, true
+func (c *Client) putFreeConn(addr net.Addr, cn *conn) {
+	cn.nc.Close()
 }
 
 func (c *Client) netTimeout() time.Duration {
@@ -256,18 +250,16 @@ func (c *Client) dial(addr net.Addr) (net.Conn, error) {
 	return nil, err
 }
 
-func (c *Client) getConn(addr net.Addr) (*conn, error) {
-	cn, ok := c.getFreeConn(addr)
-	if ok {
-		cn.extendDeadline()
-		return cn, nil
-	}
-	nc, err := c.dial(addr)
+func (c *Client) getConn(addr net.Addr) (cn *conn, err error) {
+	var nc net.Conn
+	c.withAddrPool(addr, func(pl pool.Pool) {
+		nc, err = pl.Get()
+	})
 	if err != nil {
-		return nil, err
+		return
 	}
 	cn = &conn{
-		nc:   nc,
+		nc:   nc.(*pool.PoolConn),
 		addr: addr,
 		rw:   bufio.NewReadWriter(bufio.NewReader(nc), bufio.NewWriter(nc)),
 		c:    c,
