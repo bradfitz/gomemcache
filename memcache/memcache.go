@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"math"
 	"net"
 
 	"strconv"
@@ -68,8 +69,9 @@ var (
 const DefaultTimeout = 100 * time.Millisecond
 
 const (
-	buffered            = 8 // arbitrary buffered channel size, for readability
-	maxIdleConnsPerAddr = 2 // TODO(bradfitz): make this configurable?
+	buffered            = 8  // arbitrary buffered channel size, for readability
+	maxIdleConnsPerAddr = 2  // TODO(bradfitz): make this configurable?
+	maxRetries          = 10 // maximum number of times to attempt to reconnect
 )
 
 // resumableError returns true if err is only a protocol-level cache error.
@@ -333,7 +335,25 @@ func (c *Client) withAddrRw(addr net.Addr, fn func(*bufio.ReadWriter) error) (er
 		return err
 	}
 	defer cn.condRelease(&err)
-	return fn(cn.rw)
+	// Exponential backoff (based on Ethernet)
+	retries := 0
+	err = fn(cn.rw)
+	if err == io.EOF { // Bad connection
+		cn.nc.Close()
+		for err != nil && retries < maxRetries {
+			retries++
+			backoffCoefficient := int(math.Pow(float64(2), float64(retries))) - 1
+			sleepFor := time.Nanosecond * time.Duration(50000*backoffCoefficient)
+			time.Sleep(sleepFor)
+			cn, err = c.getConn(addr)
+			if err != nil {
+				continue
+			}
+			err = fn(cn.rw)
+		}
+	}
+
+	return
 }
 
 func (c *Client) withKeyRw(key string, fn func(*bufio.ReadWriter) error) error {
