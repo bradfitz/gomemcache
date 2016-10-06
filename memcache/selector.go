@@ -5,7 +5,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-     http://www.apache.org/licenses/LICENSE-2.0
+	 http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -37,8 +37,9 @@ type ServerSelector interface {
 
 // ServerList is a simple ServerSelector. Its zero value is usable.
 type ServerList struct {
-	mu    sync.RWMutex
-	addrs []net.Addr
+	mu		   sync.RWMutex
+	addrs	   []net.Addr
+	lastServer net.Addr
 }
 
 // SetServers changes a ServerList's set of servers at runtime and is
@@ -71,6 +72,7 @@ func (ss *ServerList) SetServers(servers ...string) error {
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
 	ss.addrs = naddr
+	ss.lastServer = ss.addrs[0]
 	return nil
 }
 
@@ -99,6 +101,12 @@ var keyBufPool = sync.Pool{
 func (ss *ServerList) PickServer(key string) (net.Addr, error) {
 	ss.mu.RLock()
 	defer ss.mu.RUnlock()
+
+	// If we're closing a message return the last server
+	if strings.Contains(key, "/close") {
+		return ss.lastServer, nil
+	}
+
 	if len(ss.addrs) == 0 {
 		return nil, ErrNoServers
 	}
@@ -110,5 +118,6 @@ func (ss *ServerList) PickServer(key string) (net.Addr, error) {
 	cs := crc32.ChecksumIEEE((*bufp)[:n])
 	keyBufPool.Put(bufp)
 
-	return ss.addrs[cs%uint32(len(ss.addrs))], nil
+	ss.lastServer = ss.addrs[cs%uint32(len(ss.addrs))]
+	return ss.lastServer, nil
 }
