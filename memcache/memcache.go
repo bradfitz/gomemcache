@@ -116,7 +116,7 @@ var (
 // with equal weight. If a server is listed multiple times,
 // it gets a proportional amount of weight.
 func New(server ...string) *Client {
-	ss := new(ServerList)
+	ss := new(RRServerList)
 	ss.SetServers(server...)
 	return NewFromSelector(ss)
 }
