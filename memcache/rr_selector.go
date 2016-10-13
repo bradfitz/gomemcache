@@ -7,9 +7,10 @@ import (
 )
 
 type RRServerList struct {
-	mu		  sync.RWMutex
-	addrs	  []net.Addr
-	lastIndex int
+	mu		   sync.RWMutex
+	addrs	   []net.Addr
+	lastIndex  int
+	lastServer net.Addr
 }
 
 func (rrsl *RRServerList) SetServers(servers ...string) error {
@@ -61,13 +62,14 @@ func (rrsl *RRServerList) PickServer(key string) (net.Addr, error) {
 		return rrsl.addrs[0], nil
 	}
 	if strings.Contains(key, "/close") && !strings.Contains(key, "/close/open") {
-		return rrsl.addrs[rrsl.lastIndex-1], nil
+		return rrsl.lastServer, nil
 	}
 	if rrsl.lastIndex >= len(rrsl.addrs) {
 		rrsl.lastIndex = 0
 	}
 
-	addr := rrsl.addrs[rrsl.lastIndex]
+	rrsl.lastServer = rrsl.addrs[rrsl.lastIndex]
+	addr := rrsl.lastServer
 	rrsl.lastIndex++
 
 	return addr, nil
