@@ -186,6 +186,16 @@ func testWithClient(t *testing.T, c *Client) {
 		t.Errorf("Stats didn't get any statistics")
 	}
 
+	// StatsReset
+	err = c.StatsReset()
+	checkErr(err, "StatsReset: %v", err)
+	stats, err = c.Stats()
+	checkErr(err, "Stats: %v", err)
+	for _, s := range stats {
+		if want, got := "0", s.Stats["get_hits"]; want != got {
+			t.Errorf("StatsReset: expected stats to be reset, but get_hits is %s", got)
+		}
+	}
 }
 
 func testTouchWithClient(t *testing.T, c *Client) {

@@ -122,6 +122,7 @@ var (
 	resultEnd       = []byte("END\r\n")
 	resultOk        = []byte("OK\r\n")
 	resultTouched   = []byte("TOUCHED\r\n")
+	resultReset     = []byte("RESET\r\n")
 
 	resultClientErrorPrefix = []byte("CLIENT_ERROR ")
 	resultStatPrefix        = []byte("STAT")
@@ -690,7 +691,7 @@ func (c *Client) Stats() (map[net.Addr]Stats, error) {
 	ch := make(chan error, buffered)
 	sn := 0
 	c.selector.Each(func(addr net.Addr) error {
-		sn += 1
+		sn++
 		go func() {
 			ch <- c.statsFromAddr(addr, func(stat Stats) {
 				mu.Lock()
@@ -708,6 +709,29 @@ func (c *Client) Stats() (map[net.Addr]Stats, error) {
 		}
 	}
 	return stats, err
+}
+
+// StatsReset resets all statistics.
+func (c *Client) StatsReset() error {
+	ch := make(chan error, buffered)
+	sn := 0
+	c.selector.Each(func(addr net.Addr) error {
+		sn++
+		go func() {
+			ch <- c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
+				return writeExpectf(rw, resultReset, "stats reset\r\n")
+			})
+		}()
+		return nil
+	})
+
+	var err error
+	for i := 0; i < sn; i++ {
+		if e := <-ch; e != nil {
+			err = e
+		}
+	}
+	return err
 }
 
 func (c *Client) statsFromAddr(addr net.Addr, cb func(Stats)) error {
