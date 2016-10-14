@@ -797,3 +797,64 @@ func (c *Client) statsFromAddr(addr net.Addr, cb func(Stats)) error {
 		return nil
 	})
 }
+
+// StatsSettings returns the stats about memcached settings from all servers.
+func (c *Client) StatsSettings() (map[net.Addr]map[string]string, error) {
+	type result struct {
+		addr  net.Addr
+		stats map[string]string
+		err   error
+	}
+
+	ch := make(chan result, buffered)
+	sn := 0
+	c.selector.Each(func(addr net.Addr) error {
+		sn++
+		go func() {
+			r := result{addr: addr}
+			r.err = c.statsSettingsFromAddr(addr, func(s map[string]string) { r.stats = s })
+			ch <- r
+		}()
+		return nil
+	})
+
+	var err error
+	stats := make(map[net.Addr]map[string]string)
+	for i := 0; i < sn; i++ {
+		if r := <-ch; r.err != nil {
+			err = r.err
+		} else {
+			stats[r.addr] = r.stats
+		}
+	}
+	return stats, err
+}
+
+func (c *Client) statsSettingsFromAddr(addr net.Addr, cb func(map[string]string)) error {
+	return c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
+		line, err := writeReadLine(rw, "stats settings\r\n")
+		if err != nil {
+			return err
+		}
+
+		if bytes.HasPrefix(line, resultClientErrorPrefix) {
+			errMsg := line[len(resultClientErrorPrefix) : len(line)-2]
+			return errors.New("memcache: client error: " + string(errMsg))
+		}
+
+		stats := map[string]string{}
+		for err == nil && !bytes.Equal(line, resultEnd) {
+			s := bytes.Split(line, []byte(" "))
+			if len(s) != 3 || !bytes.HasPrefix(s[0], resultStatPrefix) {
+				return fmt.Errorf("memcache: unexpected stats line format %q", line)
+			}
+			stats[string(s[1])] = string(bytes.TrimSpace(s[2]))
+			line, err = rw.ReadSlice('\n')
+			if err != nil {
+				return err
+			}
+		}
+		cb(stats)
+		return nil
+	})
+}

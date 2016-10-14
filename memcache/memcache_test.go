@@ -196,6 +196,18 @@ func testWithClient(t *testing.T, c *Client) {
 			t.Errorf("StatsReset: expected stats to be reset, but get_hits is %s", got)
 		}
 	}
+
+	// StatsSettings
+	settings, err := c.StatsSettings()
+	checkErr(err, "StatsSettings: %v", err)
+	if len(settings) == 0 {
+		t.Errorf("StatsSettings: no settings were returned")
+	}
+	for _, s := range settings {
+		if want, got := "1024", s["maxconns"]; want != got {
+			t.Errorf("StatsSettings: want maxconns %q, got %q", want, got)
+		}
+	}
 }
 
 func testTouchWithClient(t *testing.T, c *Client) {
