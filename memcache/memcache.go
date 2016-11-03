@@ -131,7 +131,13 @@ func NewFromSelector(ss ServerSelector) *Client {
 type Client struct {
 	// Timeout specifies the socket read/write timeout.
 	// If zero, DefaultTimeout is used.
+	//
+	// Deprecated: Use Dialer instead.
+	// If both are set, Dialer takes priority.
 	Timeout time.Duration
+
+	// Dialer specifies the dial function for creating connections.
+	Dialer func(network, addr string) (net.Conn, error)
 
 	selector ServerSelector
 
@@ -241,8 +247,13 @@ func (c *Client) dial(addr net.Addr) (net.Conn, error) {
 		cn  net.Conn
 		err error
 	}
-
-	nc, err := net.DialTimeout(addr.Network(), addr.String(), c.netTimeout())
+	var nc net.Conn
+	var err error
+	if c.Dialer == nil {
+		nc, err = net.DialTimeout(addr.Network(), addr.String(), c.netTimeout())
+	} else {
+		nc, err = c.Dialer(addr.Network(), addr.String())
+	}
 	if err == nil {
 		return nc, nil
 	}
