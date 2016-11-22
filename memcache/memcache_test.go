@@ -49,7 +49,7 @@ func TestLocalhost(t *testing.T) {
 // Run the memcached binary as a child process and connect to its unix socket.
 func TestUnixSocket(t *testing.T) {
 	sock := fmt.Sprintf("/tmp/test-gomemcache-%d.sock", os.Getpid())
-	cmd := exec.Command("memcached", "-s", sock)
+	cmd := exec.Command("memcached", "-s", sock, "-u", "nobody")
 	if err := cmd.Start(); err != nil {
 		t.Skipf("skipping test; couldn't find memcached")
 		return
@@ -90,6 +90,13 @@ func testWithClient(t *testing.T, c *Client) {
 	checkErr(err, "first set(foo): %v", err)
 	err = c.Set(foo)
 	checkErr(err, "second set(foo): %v", err)
+	
+	//SetWithHashKey
+	err := c.SetWithHashKey(foo.Key, foo)
+	checkErr(err, "first set(foo): %v", err)
+	err := c.SetWithHashKey(foo.Key, foo)
+	checkErr(err, "second set(foo): %v", err)
+	
 
 	// Get
 	it, err := c.Get("foo")
@@ -104,6 +111,19 @@ func testWithClient(t *testing.T, c *Client) {
 		t.Errorf("get(foo) Flags = %v, want 123", it.Flags)
 	}
 
+	// GetWithHashKey
+	it, err = c.GetWithHashKey("foo", "foo")
+	checkErr(err, "get(foo): %v", err)
+	if it.Key != "foo" {
+		t.Errorf("get(foo) Key = %q, want foo", it.Key)
+	}
+	if string(it.Value) != "fooval" {
+		t.Errorf("get(foo) Value = %q, want fooval", string(it.Value))
+	}
+	if it.Flags != 123 {
+		t.Errorf("get(foo) Flags = %v, want 123", it.Flags)
+	}
+	
 	// Add
 	bar := &Item{Key: "bar", Value: []byte("barval")}
 	err = c.Add(bar)
