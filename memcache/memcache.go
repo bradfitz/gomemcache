@@ -68,8 +68,7 @@ var (
 const DefaultTimeout = 100 * time.Millisecond
 
 const (
-	buffered			= 8 // arbitrary buffered channel size, for readability
-	maxIdleConnsPerAddr = 2 // TODO(bradfitz): make this configurable?
+	buffered = 8 // arbitrary buffered channel size, for readability
 )
 
 // resumableError returns true if err is only a protocol-level cache error.
@@ -97,17 +96,17 @@ func legalKey(key string) bool {
 }
 
 var (
-	crlf			= []byte("\r\n")
-	space			= []byte(" ")
-	resultOK		= []byte("OK\r\n")
-	resultStored	= []byte("STORED\r\n")
+	crlf            = []byte("\r\n")
+	space           = []byte(" ")
+	resultOK        = []byte("OK\r\n")
+	resultStored    = []byte("STORED\r\n")
 	resultNotStored = []byte("NOT_STORED\r\n")
-	resultExists	= []byte("EXISTS\r\n")
-	resultNotFound	= []byte("NOT_FOUND\r\n")
-	resultDeleted	= []byte("DELETED\r\n")
-	resultEnd		= []byte("END\r\n")
-	resultOk		= []byte("OK\r\n")
-	resultTouched	= []byte("TOUCHED\r\n")
+	resultExists    = []byte("EXISTS\r\n")
+	resultNotFound  = []byte("NOT_FOUND\r\n")
+	resultDeleted   = []byte("DELETED\r\n")
+	resultEnd       = []byte("END\r\n")
+	resultOk        = []byte("OK\r\n")
+	resultTouched   = []byte("TOUCHED\r\n")
 
 	resultClientErrorPrefix = []byte("CLIENT_ERROR ")
 )
@@ -123,7 +122,7 @@ func New(server ...string) *Client {
 
 // NewFromSelector returns a new Client using the provided ServerSelector.
 func NewFromSelector(ss ServerSelector) *Client {
-	return &Client{selector: ss}
+	return &Client{selector: ss, MaxConns: 2}
 }
 
 // Client is a memcache client.
@@ -133,9 +132,11 @@ type Client struct {
 	// If zero, DefaultTimeout is used.
 	Timeout time.Duration
 
+	MaxConns int
+
 	selector ServerSelector
 
-	lk		 sync.Mutex
+	lk       sync.Mutex
 	freeconn map[string][]*conn
 }
 
@@ -162,10 +163,10 @@ type Item struct {
 
 // conn is a connection to a server.
 type conn struct {
-	nc	 net.Conn
-	rw	 *bufio.ReadWriter
+	nc   net.Conn
+	rw   *bufio.ReadWriter
 	addr net.Addr
-	c	 *Client
+	c    *Client
 }
 
 // release returns this connection back to the client's free pool
@@ -196,7 +197,7 @@ func (c *Client) putFreeConn(addr net.Addr, cn *conn) {
 		c.freeconn = make(map[string][]*conn)
 	}
 	freelist := c.freeconn[addr.String()]
-	if len(freelist) >= maxIdleConnsPerAddr {
+	if len(freelist) >= c.MaxConns {
 		cn.nc.Close()
 		return
 	}
@@ -247,7 +248,7 @@ func (cte *ConnectTimeoutError) Error() string {
 
 func (c *Client) dial(addr net.Addr) (net.Conn, error) {
 	type connError struct {
-		cn	net.Conn
+		cn  net.Conn
 		err error
 	}
 
@@ -274,10 +275,10 @@ func (c *Client) getConn(addr net.Addr) (*conn, error) {
 		return nil, err
 	}
 	cn = &conn{
-		nc:	  nc,
+		nc:   nc,
 		addr: addr,
-		rw:	  bufio.NewReadWriter(bufio.NewReader(nc), bufio.NewWriter(nc)),
-		c:	  c,
+		rw:   bufio.NewReadWriter(bufio.NewReader(nc), bufio.NewWriter(nc)),
+		c:    c,
 	}
 	cn.extendDeadline()
 	return cn, nil
