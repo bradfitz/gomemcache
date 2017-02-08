@@ -316,8 +316,20 @@ func (c *Client) FlushAll() error {
 // memcache cache miss. The key must be at most 250 bytes in length.
 func (c *Client) Get(key string) (item *Item, err error) {
 	err = c.withKeyAddr(key, func(addr net.Addr) error {
-		return c.getFromAddr(addr, []string{key}, func(it *Item) { item = it })
+		return c.getFromAddr(addr, []string{key}, true, func(it *Item) { item = it })
 	})
+	if err == nil && item == nil {
+		err = ErrCacheMiss
+	}
+	return
+}
+
+// GetNoCasID gets the item for the given key without CAS identifier. ErrCacheMiss is returned for a
+// memcache cache miss. The key must be at most 250 bytes in length.
+func (c *Client) GetNoCasID(key string) (item *Item, err error) {
+	err = c.withKeyAddr(key, func(addr net.Addr) error {
+			return c.getFromAddr(addr, []string{key}, false, func(it *Item) { item = it })
+		})
 	if err == nil && item == nil {
 		err = ErrCacheMiss
 	}
@@ -360,9 +372,13 @@ func (c *Client) withKeyRw(key string, fn func(*bufio.ReadWriter) error) error {
 	})
 }
 
-func (c *Client) getFromAddr(addr net.Addr, keys []string, cb func(*Item)) error {
+func (c *Client) getFromAddr(addr net.Addr, keys []string, withCas bool, cb func(*Item)) error {
 	return c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
-		if _, err := fmt.Fprintf(rw, "gets %s\r\n", strings.Join(keys, " ")); err != nil {
+		command := "gets"
+		if !withCas {
+			command = "get"
+		}
+		if _, err := fmt.Fprintf(rw, "%s %s\r\n", command, strings.Join(keys, " ")); err != nil {
 			return err
 		}
 		if err := rw.Flush(); err != nil {
@@ -452,7 +468,7 @@ func (c *Client) GetMulti(keys []string) (map[string]*Item, error) {
 	ch := make(chan error, buffered)
 	for addr, keys := range keyMap {
 		go func(addr net.Addr, keys []string) {
-			ch <- c.getFromAddr(addr, keys, addItemToMap)
+			ch <- c.getFromAddr(addr, keys, true, addItemToMap)
 		}(addr, keys)
 	}
 
