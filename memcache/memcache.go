@@ -62,6 +62,11 @@ var (
 
 	// ErrNoServers is returned when no servers are configured or available.
 	ErrNoServers = errors.New("memcache: no servers configured or available")
+
+	// ErrBadStatsLine means that the response line was expected to be
+	// a line with server statistics information, but the parser was not
+	// able to parse it.
+	ErrBadStatsLine = errors.New("memcache: bad stats line")
 )
 
 const (
@@ -113,6 +118,12 @@ var (
 	resultTouched   = []byte("TOUCHED\r\n")
 
 	resultClientErrorPrefix = []byte("CLIENT_ERROR ")
+
+	statsGetHits      = []byte("STAT get_hits ")
+	statsGetMisses    = []byte("STAT get_misses ")
+	statsBytesWritten = []byte("STAT bytes_written ")
+	statsItems        = []byte("STAT curr_items ")
+	statsBytes        = []byte("STAT bytes ")
 )
 
 // New returns a memcache client using the provided server(s)
@@ -177,6 +188,24 @@ type conn struct {
 	rw   *bufio.ReadWriter
 	addr net.Addr
 	c    *Client
+}
+
+// Statistics is a record of a single memcached server usage stats.
+type Statistics struct {
+	// Hits is a counter of cache hits.
+	Hits uint64
+
+	// Misses is a counter of cache misses.
+	Misses uint64
+
+	// ByteHits is amount of bytes transferred for gets.
+	ByteHits uint64
+
+	// Items is amount of keys currently in the cache.
+	Items uint64
+
+	// Bytes is a size of all items currently in the cache.
+	Bytes uint64
 }
 
 // release returns this connection back to the client's free pool
@@ -681,4 +710,99 @@ func (c *Client) incrDecr(verb, key string, delta uint64) (uint64, error) {
 		return nil
 	})
 	return val, err
+}
+
+func parseStatsLine(s []byte, expectedPrefix []byte) (uint64, error) {
+	if !bytes.HasPrefix(s, expectedPrefix) {
+		return 0, ErrBadStatsLine
+	}
+	return strconv.ParseUint(
+		string(s[len(expectedPrefix):len(s)-2]), 10, 64)
+}
+
+func parseStatsResponse(r *bufio.Reader, stats *Statistics) error {
+	for {
+		line, err := r.ReadSlice('\n')
+		if err != nil {
+			return err
+		}
+		if bytes.Equal(line, resultEnd) {
+			return nil
+		}
+		if hits, err := parseStatsLine(line, statsGetHits); err == nil {
+			stats.Hits = hits
+			continue
+		}
+		if misses, err := parseStatsLine(line, statsGetMisses); err == nil {
+			stats.Misses = misses
+			continue
+		}
+		if bytesWritten, err := parseStatsLine(line, statsBytesWritten); err == nil {
+			stats.ByteHits = bytesWritten
+			continue
+		}
+		if items, err := parseStatsLine(line, statsItems); err == nil {
+			stats.Items = items
+			continue
+		}
+		if bytes_total, err := parseStatsLine(line, statsBytes); err == nil {
+			stats.Bytes = bytes_total
+			continue
+		}
+	}
+}
+
+// Stats returns memcached statistics for each server in the server list.
+func (c *Client) Stats() (map[string]*Statistics, error) {
+	var mlk sync.Mutex
+	m := make(map[string]*Statistics)
+	addItemToMap := func(server string, s *Statistics) {
+		mlk.Lock()
+		defer mlk.Unlock()
+		m[server] = s
+	}
+
+	// Eliminate duplicates.
+	serversMap := make(map[net.Addr]string)
+	c.selector.Each(func(a net.Addr) error {
+		serversMap[a] = a.String()
+		return nil
+	})
+
+	// Query servers.
+	ch := make(chan error)
+	for addr, _ := range serversMap {
+		go func(addr net.Addr) {
+			cn, err := c.getConn(addr)
+			if err != nil {
+				ch <- err
+				return
+			}
+			defer cn.condRelease(&err)
+
+			if _, err := fmt.Fprintf(cn.rw, "stats\r\n"); err != nil {
+				ch <- err
+				return
+			}
+			if err := cn.rw.Flush(); err != nil {
+				ch <- err
+				return
+			}
+			stats := new(Statistics)
+			if err := parseStatsResponse(cn.rw.Reader, stats); err != nil {
+				ch <- err
+				return
+			}
+			addItemToMap(cn.addr.String(), stats)
+			ch <- nil
+		}(addr)
+	}
+
+	var err error
+	for _ = range serversMap {
+		if ge := <-ch; ge != nil {
+			err = ge
+		}
+	}
+	return m, err
 }
