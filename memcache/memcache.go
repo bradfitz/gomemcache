@@ -70,7 +70,20 @@ const (
 
 	// DefaultMaxIdleConns is the default maximum number of idle connections
 	// kept for any single address.
-	DefaultMaxIdleConns = 2
+	DefaultMaxIdleConns = 100
+
+	// DefaultMinIdleConns is the default minimum number of idle connections
+	// kept for any single address.
+	DefaultMinIdleConns = 2
+
+	// DefaultIdleTimeout is the time after which the freelist is scanned and
+	// idle connections are closed.  Since the connections are scanned with the
+	// same period as their TTL, they may live for up to twice this duration.
+	DefaultIdleTimeout = 60 * time.Second
+
+	// DefaultMaxOpenConns is the maximum number of active and idle connections
+	// for any single address.
+	DefaultMaxOpenConns = 200
 )
 
 const buffered = 8 // arbitrary buffered channel size, for readability
@@ -126,7 +139,7 @@ func New(server ...string) *Client {
 
 // NewFromSelector returns a new Client using the provided ServerSelector.
 func NewFromSelector(ss ServerSelector) *Client {
-	return &Client{selector: ss}
+	return &Client{MinIdleConns: -1, selector: ss, openconn: make(map[string]chan struct{})}
 }
 
 // Client is a memcache client.
@@ -144,10 +157,23 @@ type Client struct {
 	// be set to a number higher than your peak parallel requests.
 	MaxIdleConns int
 
+	// MinIdleConns is the minimum number of idle connections to keep in the freelist.
+	// -1 indicates that DefaultMinIdleConns should be used.
+	MinIdleConns int
+
+	// IdleTimeout specifies the duration an Idle connection will remain unclosed.
+	IdleTimeout time.Duration
+
+	// MaxOpenConns is the maximum number of active and idle connections per address.
+	MaxOpenConns int
+
 	selector ServerSelector
 
 	lk       sync.Mutex
 	freeconn map[string][]*conn
+	// openconn is a semaphore for limiting connections in use.
+	openconn map[string]chan struct{}
+	bg       *time.Timer
 }
 
 // Item is an item to be got or stored in a memcached server.
@@ -177,15 +203,17 @@ type conn struct {
 	rw   *bufio.ReadWriter
 	addr net.Addr
 	c    *Client
-}
-
-// release returns this connection back to the client's free pool
-func (cn *conn) release() {
-	cn.c.putFreeConn(cn.addr, cn)
+	t    time.Time
 }
 
 func (cn *conn) extendDeadline() {
 	cn.nc.SetDeadline(time.Now().Add(cn.c.netTimeout()))
+}
+
+func (c *Client) releaseOpenConn(addr net.Addr) {
+	c.lk.Lock()
+	c.releaseOpenConnLocked(addr)
+	c.lk.Unlock()
 }
 
 // condRelease releases this connection if the error pointed to by err
@@ -193,16 +221,33 @@ func (cn *conn) extendDeadline() {
 // cache miss).  The purpose is to not recycle TCP connections that
 // are bad.
 func (cn *conn) condRelease(err *error) {
+	c := cn.c
+	c.lk.Lock()
 	if *err == nil || resumableError(*err) {
-		cn.release()
+		c.putFreeConn(cn.addr, cn)
 	} else {
 		cn.nc.Close()
 	}
+	c.releaseOpenConnLocked(cn.addr)
+	c.lk.Unlock()
+}
+
+func (c *Client) acquireOpenConn(addr net.Addr) {
+	c.lk.Lock()
+	s := c.openconn[addr.String()]
+	if s == nil {
+		s = make(chan struct{}, c.maxOpenConns())
+		c.openconn[addr.String()] = s
+	}
+	c.lk.Unlock()
+	s <- struct{}{}
+}
+
+func (c *Client) releaseOpenConnLocked(addr net.Addr) {
+	<-c.openconn[addr.String()]
 }
 
 func (c *Client) putFreeConn(addr net.Addr, cn *conn) {
-	c.lk.Lock()
-	defer c.lk.Unlock()
 	if c.freeconn == nil {
 		c.freeconn = make(map[string][]*conn)
 	}
@@ -212,6 +257,44 @@ func (c *Client) putFreeConn(addr net.Addr, cn *conn) {
 		return
 	}
 	c.freeconn[addr.String()] = append(freelist, cn)
+}
+
+func (c *Client) cleanup() {
+	c.lk.Lock()
+	defer c.lk.Unlock()
+	if c.freeconn == nil {
+		return
+	}
+	new_freeconn := make(map[string][]*conn)
+	timeout := time.Now().Add(-c.idleTimeout())
+	for k, freelist := range c.freeconn {
+		if len(freelist) <= c.minIdleConns() {
+			if len(freelist) > 0 {
+				new_freeconn[k] = freelist
+			}
+			continue
+		}
+		// freelist is sorted descending in time, so loop to find the
+		// index to keep.
+		i := 0
+		for ; i < len(freelist)-c.minIdleConns(); i++ {
+			cn := freelist[i]
+			if cn.t.After(timeout) {
+				break
+			}
+			cn.nc.Close()
+		}
+		if i < len(freelist) {
+			new_freeconn[k] = freelist[i:]
+		}
+	}
+	if len(new_freeconn) > 0 {
+		c.freeconn = new_freeconn
+		c.bg = time.AfterFunc(c.idleTimeout(), c.cleanup)
+	} else {
+		c.freeconn = nil
+		c.bg = nil
+	}
 }
 
 func (c *Client) getFreeConn(addr net.Addr) (cn *conn, ok bool) {
@@ -241,6 +324,27 @@ func (c *Client) maxIdleConns() int {
 		return c.MaxIdleConns
 	}
 	return DefaultMaxIdleConns
+}
+
+func (c *Client) minIdleConns() int {
+	if c.MinIdleConns >= 0 {
+		return c.MinIdleConns
+	}
+	return DefaultMinIdleConns
+}
+
+func (c *Client) idleTimeout() time.Duration {
+	if c.IdleTimeout > 0 {
+		return c.IdleTimeout
+	}
+	return DefaultIdleTimeout
+}
+
+func (c *Client) maxOpenConns() int {
+	if c.MaxOpenConns > 0 {
+		return c.MaxOpenConns
+	}
+	return DefaultMaxOpenConns
 }
 
 // ConnectTimeoutError is the error type used when it takes
@@ -273,6 +377,7 @@ func (c *Client) dial(addr net.Addr) (net.Conn, error) {
 }
 
 func (c *Client) getConn(addr net.Addr) (*conn, error) {
+	c.acquireOpenConn(addr)
 	cn, ok := c.getFreeConn(addr)
 	if ok {
 		cn.extendDeadline()
@@ -280,6 +385,7 @@ func (c *Client) getConn(addr net.Addr) (*conn, error) {
 	}
 	nc, err := c.dial(addr)
 	if err != nil {
+		c.releaseOpenConn(addr)
 		return nil, err
 	}
 	cn = &conn{

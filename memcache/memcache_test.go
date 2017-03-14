@@ -22,10 +22,12 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
 	"net"
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -49,17 +51,13 @@ func TestLocalhost(t *testing.T) {
 	testWithClient(t, New(testServer))
 }
 
-// Run the memcached binary as a child process and connect to its unix socket.
-func TestUnixSocket(t *testing.T) {
-	sock := fmt.Sprintf("/tmp/test-gomemcache-%d.sock", os.Getpid())
+func MakeUnixSocketMemcached(t *testing.T, tag string) (string, *exec.Cmd, error) {
+	sock := fmt.Sprintf("/tmp/test-gomemcache-%d%s.sock", tag, os.Getpid())
 	cmd := exec.Command("memcached", "-s", sock)
 	if err := cmd.Start(); err != nil {
 		t.Skipf("skipping test; couldn't find memcached")
-		return
+		return "", nil, err
 	}
-	defer cmd.Wait()
-	defer cmd.Process.Kill()
-
 	// Wait a bit for the socket to appear.
 	for i := 0; i < 10; i++ {
 		if _, err := os.Stat(sock); err == nil {
@@ -67,7 +65,17 @@ func TestUnixSocket(t *testing.T) {
 		}
 		time.Sleep(time.Duration(25*i) * time.Millisecond)
 	}
+	return sock, cmd, nil
+}
 
+// Run the memcached binary as a child process and connect to its unix socket.
+func TestUnixSocket(t *testing.T) {
+	sock, cmd, err := MakeUnixSocketMemcached(t, "")
+	if err != nil {
+		return
+	}
+	defer cmd.Wait()
+	defer cmd.Process.Kill()
 	testWithClient(t, New(sock))
 }
 
@@ -256,6 +264,120 @@ func testTouchWithClient(t *testing.T, c *Client) {
 			t.Fatalf("unexpected error retrieving bar: %v", err.Error())
 		}
 	}
+}
+
+// stallProxy blocks all connections until a caller unblocks it.
+type stallProxy struct {
+	l       *net.UnixListener
+	stallCh chan struct{}
+	sock    string
+	mu      sync.Mutex
+	waiting int
+}
+
+func newStallProxy(addr string) (*stallProxy, error) {
+	sock := fmt.Sprintf("/tmp/test-stall-gomemcache-%d.sock", os.Getpid())
+	laddr, err := net.ResolveUnixAddr("unix", sock)
+	if err != nil {
+		return nil, err
+	}
+	l, err := net.ListenUnix("unix", laddr)
+	if err != nil {
+		return nil, err
+	}
+	s := &stallProxy{
+		stallCh: make(chan struct{}, 1000),
+		l:       l,
+		sock:    sock,
+	}
+	go s.listenLoop(addr)
+	return s, nil
+}
+
+func (s *stallProxy) listenLoop(addr string) {
+	laddr, err := net.ResolveUnixAddr("unix", addr)
+	if err != nil {
+		log.Fatalf("ResolveUnixAddr(%s) failed: %v", addr, err)
+	}
+	for {
+		lConn, err := s.l.AcceptUnix()
+		if err != nil {
+			log.Fatalf("AcceptUnix(%s) failed: %v", addr, err)
+		}
+		rConn, err := net.DialUnix("unix", nil, laddr)
+		if err != nil {
+			log.Fatalf("Dial(%s) failed: %v", addr, err)
+		}
+		go func() { // Send loop
+			io.Copy(rConn, lConn)
+			rConn.CloseWrite()
+			lConn.CloseRead()
+		}()
+		go func() { // Receive loop
+			s.mu.Lock()
+			s.waiting++
+			s.mu.Unlock()
+			<-s.stallCh
+			io.Copy(lConn, rConn)
+			rConn.CloseRead()
+			lConn.CloseWrite()
+		}()
+	}
+}
+
+func (s *stallProxy) Close() {
+	s.l.Close()
+}
+
+func (s *stallProxy) Unstall() {
+	close(s.stallCh)
+	return
+	s.mu.Lock()
+	for s.waiting > 0 {
+		s.stallCh <- struct{}{}
+		s.waiting--
+	}
+	s.mu.Unlock()
+}
+
+func (s *stallProxy) Waiting() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.waiting
+}
+
+// Run a stallProxy in front of a unix domain socket to memacached.
+func TestMaxConn(t *testing.T) {
+	sock, cmd, err := MakeUnixSocketMemcached(t, "-max")
+	if err != nil {
+		return
+	}
+	defer cmd.Wait()
+	defer cmd.Process.Kill()
+
+	stallp, err := newStallProxy(sock)
+	c := New(stallp.sock)
+	n := 10
+	c.MaxOpenConns = n
+	c.Timeout = 1 * time.Second
+	mustSet := mustSetF(t, c)
+	// Start 2 * MaxOpenConns operations.
+	var wg sync.WaitGroup
+	for i := 0; i < n*2; i++ {
+		wg.Add(1)
+		go func(a int) {
+			mustSet(&Item{Key: "foo", Value: []byte("42")})
+			wg.Done()
+		}(i)
+	}
+	// Wait and verify n are queued.
+	time.Sleep(c.Timeout / 2)
+	if stallp.Waiting() != n {
+		t.Fatalf("Incorrect number of connections waiting: %d\n", stallp.Waiting())
+	}
+	stallp.Unstall()
+	// Ensure that they all complete successfully.
+	wg.Wait()
 }
 
 func BenchmarkOnItem(b *testing.B) {
