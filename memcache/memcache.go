@@ -311,7 +311,10 @@ func (c *Client) Get(key string) (item *Item, err error) {
 		return c.getFromAddrSingle(addr, key, func(it *Item) { item = it })
 	})
 	if err == nil && item == nil {
+		c.selector.CacheMiss()
 		err = ErrCacheMiss
+	} else {
+		c.selector.CacheHit()
 	}
 	return
 }
@@ -688,12 +691,4 @@ func (c *Client) incrDecr(verb, key string, delta uint64) (uint64, error) {
 		return nil
 	})
 	return val, err
-}
-
-func (c *Client) CacheMiss() {
-	c.selector.CacheMiss()
-}
-
-func (c *Client) CacheHit() {
-	c.selector.CacheHit()
 }
