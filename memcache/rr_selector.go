@@ -101,7 +101,6 @@ func (rrsl *RRServerList) PickServer(key string) (net.Addr, error) {
 
 	rrsl.lastServer = &rrsl.servers[rrsl.lastIndex]
 	addr := rrsl.lastServer.addr
-	rrsl.lastIndex++
 
 	return addr, nil
 }
