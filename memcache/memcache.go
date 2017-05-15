@@ -689,3 +689,11 @@ func (c *Client) incrDecr(verb, key string, delta uint64) (uint64, error) {
 	})
 	return val, err
 }
+
+func (c *Client) CacheMiss() {
+	c.selector.CacheMiss()
+}
+
+func (c *Client) CacheHit() {
+	c.selector.CacheHit()
+}

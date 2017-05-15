@@ -33,6 +33,8 @@ type ServerSelector interface {
 	// should be shared onto.
 	PickServer(key string) (net.Addr, error)
 	Each(func(net.Addr) error) error
+	CacheMiss()
+	CacheHit()
 }
 
 // ServerList is a simple ServerSelector. Its zero value is usable.
@@ -112,3 +114,7 @@ func (ss *ServerList) PickServer(key string) (net.Addr, error) {
 
 	return ss.addrs[cs%uint32(len(ss.addrs))], nil
 }
+
+// No-ops in this selector
+func (ss *ServerList) CacheHit()  {}
+func (ss *ServerList) CacheMiss() {}
