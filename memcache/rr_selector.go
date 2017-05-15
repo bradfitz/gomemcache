@@ -93,6 +93,7 @@ func (rrsl *RRServerList) PickServer(key string) (net.Addr, error) {
 			found = true
 			rrsl.lastIndex = index
 		}
+		index++
 	}
 
 	if !found {
