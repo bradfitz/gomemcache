@@ -80,7 +80,7 @@ func (rrsl *RRServerList) PickServer(key string) (net.Addr, error) {
 			index = 0
 			continue
 		}
-		server := rrsl.servers[index]
+		server := &rrsl.servers[index]
 		if server.missCount >= missCount {
 			if server.skipCount >= skipCount {
 				server.skipCount = 0
