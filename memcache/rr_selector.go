@@ -4,17 +4,18 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"time"
 )
 
 const (
-	missCount = 3   // Number of times we allow a server to get a cache miss before we start skipping it
-	skipCount = 100 // Number of times to skip over this server in the selector before we try again
+	missCount = 3               // Number of times we allow a server to get a cache miss before we start skipping it
+	skipTime  = time.Second * 5 // Time delay until we retry the server again
 )
 
 type rrServer struct {
-	addr      net.Addr
-	missCount int // Consecutive number of misses on this particular server
-	skipCount int // Number of times we've skipped this server in the selector
+	addr         net.Addr
+	missCount    int // Consecutive number of misses on this particular server
+	skipDeadline time.Time
 }
 
 type RRServerList struct {
@@ -82,12 +83,9 @@ func (rrsl *RRServerList) PickServer(key string) (net.Addr, error) {
 		}
 		server := &rrsl.servers[index]
 		if server.missCount >= missCount {
-			if server.skipCount >= skipCount {
-				server.skipCount = 0
+			if time.Now().After(server.skipDeadline) {
 				found = true
 				rrsl.lastIndex = index
-			} else {
-				server.skipCount++
 			}
 		} else {
 			found = true
@@ -114,6 +112,9 @@ func (rrsl *RRServerList) PickServer(key string) (net.Addr, error) {
 // too often
 func (rrsl *RRServerList) CacheMiss() {
 	rrsl.lastServer.missCount++
+	if rrsl.lastServer.missCount >= missCount {
+		rrsl.lastServer.skipDeadline = time.Now().Add(skipTime)
+	}
 }
 
 // Record a cache hit on the server to put it back in the regular rotation
