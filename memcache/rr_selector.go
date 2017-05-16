@@ -113,6 +113,7 @@ func (rrsl *RRServerList) PickServer(key string) (net.Addr, error) {
 func (rrsl *RRServerList) CacheMiss() {
 	rrsl.lastServer.missCount++
 	if rrsl.lastServer.missCount >= missCount {
+		rrsl.lastServer.missCount = missCount
 		rrsl.lastServer.skipDeadline = time.Now().Add(skipTime)
 	}
 }
