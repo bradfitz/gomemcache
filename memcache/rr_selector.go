@@ -1,6 +1,7 @@
 package memcache
 
 import (
+	"math/rand"
 	"net"
 	"strings"
 	"sync"
@@ -8,8 +9,9 @@ import (
 )
 
 const (
-	missCount = 3               // Number of times we allow a server to get a cache miss before we start skipping it
-	skipTime  = time.Second * 5 // Time delay until we retry the server again
+	missCount      = 3               // Number of times we allow a server to get a cache miss before we start skipping it
+	skipTimeBase   = time.Second * 5 // Time delay until we retry the server again
+	extraWaitRange = 3               // Randomize the delay a little bit between clients to prevent the thundering herd problem
 )
 
 type rrServer struct {
@@ -114,7 +116,10 @@ func (rrsl *RRServerList) CacheMiss() {
 	rrsl.lastServer.missCount++
 	if rrsl.lastServer.missCount >= missCount {
 		rrsl.lastServer.missCount = missCount
-		rrsl.lastServer.skipDeadline = time.Now().Add(skipTime)
+		// When we set the deadline randomize it a bit per client so that all
+		// thread's don't wake up around the same time and hammer the servers
+		extraWait := time.Duration(rand.Int31n(extraWaitRange))
+		rrsl.lastServer.skipDeadline = time.Now().Add(skipTimeBase + time.Second*extraWait)
 	}
 }
 
