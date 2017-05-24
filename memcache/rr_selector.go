@@ -78,10 +78,9 @@ func (rrsl *RRServerList) PickServer(key string) (net.Addr, error) {
 
 	found := false
 	index := rrsl.lastIndex + 1
-	for index != rrsl.lastIndex && !found {
+	for !found {
 		if index >= len(rrsl.servers) {
 			index = 0
-			continue
 		}
 		server := &rrsl.servers[index]
 		if server.missCount >= missCount {
@@ -94,6 +93,9 @@ func (rrsl *RRServerList) PickServer(key string) (net.Addr, error) {
 			rrsl.lastIndex = index
 		}
 		index++
+		if index == rrsl.lastIndex+1 {
+			break
+		}
 	}
 
 	if !found {
