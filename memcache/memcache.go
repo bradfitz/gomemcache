@@ -190,6 +190,21 @@ func (cn *conn) condRelease(err *error) {
 	}
 }
 
+func (c *Client) UpdateServerList(server ...string) {
+	// There's a race here still when this function is interleaved between
+	// getFreeConn and putFreeConn resulting in possibly leaving some orphaned
+	// connections behind for servers that are no longer in the list
+	c.lk.Lock()
+	defer c.lk.Unlock()
+
+	newSelector := new(RRServerList)
+	newSelector.SetServers(server...)
+
+	c.closeUnlocked()
+
+	c.selector = newSelector
+}
+
 func (c *Client) putFreeConn(addr net.Addr, cn *conn) {
 	c.lk.Lock()
 	defer c.lk.Unlock()
@@ -206,10 +221,17 @@ func (c *Client) putFreeConn(addr net.Addr, cn *conn) {
 
 // Close all open connections
 func (c *Client) Close() {
-	for _, freelist := range c.freeconn {
+	c.lk.Lock()
+	defer c.lk.Unlock()
+	c.closeUnlocked()
+}
+
+func (c *Client) closeUnlocked() {
+	for key, freelist := range c.freeconn {
 		for _, conn := range freelist {
 			conn.nc.Close()
 		}
+		delete(c.freeconn, key)
 	}
 }
 
