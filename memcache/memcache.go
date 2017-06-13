@@ -196,13 +196,8 @@ func (c *Client) UpdateServerList(server ...string) {
 	// connections behind for servers that are no longer in the list
 	c.lk.Lock()
 	defer c.lk.Unlock()
-
-	newSelector := new(RRServerList)
-	newSelector.SetServers(server...)
-
+	c.selector.SetServers(server...)
 	c.closeUnlocked()
-
-	c.selector = newSelector
 }
 
 func (c *Client) putFreeConn(addr net.Addr, cn *conn) {

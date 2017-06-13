@@ -48,6 +48,8 @@ func (rrsl *RRServerList) SetServers(servers ...string) error {
 	rrsl.mu.Lock()
 	defer rrsl.mu.Unlock()
 	rrsl.servers = rrServers
+	rrsl.lastIndex = 0
+	rrsl.lastServer = nil
 	return nil
 }
 
