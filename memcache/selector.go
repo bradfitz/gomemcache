@@ -31,6 +31,7 @@ import (
 type ServerSelector interface {
 	// PickServer returns the server address that a given item
 	// should be shared onto.
+	SetServers(servers ...string) error
 	PickServer(key string) (net.Addr, error)
 	Each(func(net.Addr) error) error
 	CacheMiss()
