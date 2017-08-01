@@ -330,7 +330,7 @@ func (c *Client) Get(key string) (item *Item, err error) {
 	if err == nil && item == nil {
 		c.selector.CacheMiss()
 		err = ErrCacheMiss
-	} else {
+	} else if err == nil {
 		c.selector.CacheHit()
 	}
 	return
