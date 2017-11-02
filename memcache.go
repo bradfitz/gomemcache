@@ -258,24 +258,26 @@ func (cte *ConnectTimeoutError) Error() string {
 	return "memcache: connect timeout to " + cte.Addr.String()
 }
 
-func (c *Client) dial(addr net.Addr) (*appnet.Conn, error) {
-	/*type connError struct {
+func (c *Client) dial(addr net.Addr) (appnet.Conn, error) {
+	type connError struct {
 		cn  appnet.Conn
 		err error
-	}*/
+	}
 
-	ctx := context.Background() //whoops... needed a real value instead of var context.Context
+	ctx := context.Background() 
 
 	nc, err := appnet.DialTimeout(ctx, addr.Network(), addr.String(), c.netTimeout())
 	if err == nil {
-		return nc, nil //go:270: cannot use nc (type *socket.Conn) as type socket.Conn in return argument
+		return *nc, nil
 	}
+
+	var impT appnet.Conn
 
 	if ne, ok := err.(net.Error); ok && ne.Timeout() {
-		return nil, &ConnectTimeoutError{addr} //go:274: cannot use nil as type socket.Conn in return argument
+		return impT, &ConnectTimeoutError{addr} 
 	}
 
-	return nil, err //go:277: cannot use nil as type socket.Conn in return argument
+	return impT, err
 }
 
 func (c *Client) getConn(addr net.Addr) (*conn, error) {
