@@ -176,7 +176,7 @@ type Item struct {
 
 // conn is a connection to a server.
 type conn struct {
-	nc   appnet.Conn
+	nc   net.Conn
 	rw   *bufio.ReadWriter
 	addr net.Addr
 	c    *Client
@@ -257,11 +257,11 @@ func (cte *ConnectTimeoutError) Error() string {
 	return "memcache: connect timeout to " + cte.Addr.String()
 }
 
-func (c *Client) dial(addr net.Addr) (appnet.Conn, error) {
-	type connError struct {
+func (c *Client) dial(addr net.Addr) (net.Conn, error) {
+	/*type connError struct {
 		cn  appnet.Conn
 		err error
-	}
+	}*/
 
 	var ctx context.Context
 
