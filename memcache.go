@@ -33,6 +33,7 @@ import (
 	"net"
 
 	"golang.org/x/net/context"
+	"golang.org/x/oauth2/github"
 )
 
 // Similar to:
@@ -53,10 +54,10 @@ var (
 	ErrNotStored = errors.New("memcache: item not stored")
 
 	// ErrServer means that a server error occurred.
-	ErrServerError = errors.New("memcache: server error")
+	//ErrServerError = errors.New("memcache: server error") Not Used...
 
 	// ErrNoStats means that no statistics were available.
-	ErrNoStats = errors.New("memcache: no statistics available")
+	//ErrNoStats = errors.New("memcache: no statistics available") Not Used...
 
 	// ErrMalformedKey is returned when an invalid key is used.
 	// Keys must be at maximum 250 bytes long and not
@@ -263,18 +264,18 @@ func (c *Client) dial(addr net.Addr) (net.Conn, error) {
 		err error
 	}*/
 
-	var ctx context.Context
+	ctx := context.Background() //whoops... needed a real value instead of var context.Context
 
 	nc, err := appnet.DialTimeout(ctx, addr.Network(), addr.String(), c.netTimeout())
 	if err == nil {
-		return nc, nil
+		return nc, nil //go:270: cannot use nc (type *socket.Conn) as type socket.Conn in return argument
 	}
 
 	if ne, ok := err.(net.Error); ok && ne.Timeout() {
-		return nil, &ConnectTimeoutError{addr}
+		return nil, &ConnectTimeoutError{addr} //go:274: cannot use nil as type socket.Conn in return argument
 	}
 
-	return nil, err
+	return nil, err //go:277: cannot use nil as type socket.Conn in return argument
 }
 
 func (c *Client) getConn(addr net.Addr) (*conn, error) {
