@@ -258,7 +258,7 @@ func (cte *ConnectTimeoutError) Error() string {
 	return "memcache: connect timeout to " + cte.Addr.String()
 }
 
-func (c *Client) dial(addr net.Addr) (net.Conn, error) {
+func (c *Client) dial(addr net.Addr) (*appnet.Conn, error) {
 	/*type connError struct {
 		cn  appnet.Conn
 		err error
