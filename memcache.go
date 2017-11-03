@@ -33,7 +33,6 @@ import (
 	"net"
 
 	"golang.org/x/net/context"
-	"golang.org/x/oauth2/github"
 )
 
 // Similar to:
