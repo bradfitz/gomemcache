@@ -24,14 +24,13 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"net"
 	"time"
 	"sync"
 	"strings"
 	"strconv"
 
 	appnet "google.golang.org/appengine/socket"
-	"net"
-
 	"golang.org/x/net/context"
 )
 
@@ -118,10 +117,14 @@ var (
 	resultClientErrorPrefix = []byte("CLIENT_ERROR ")
 )
 
+// Brian Kovacs 11.6.2018 added variable to pass context from appengine to this package ********************
+var ctx context.Context
+
 // New returns a memcache client using the provided server(s)
 // with equal weight. If a server is listed multiple times,
 // it gets a proportional amount of weight.
-func New(server ...string) *Client {
+func New(ctx1 context.Context, server ...string) *Client {
+	ctx = ctx1
 	ss := new(ServerList)
 	ss.SetServers(server...)
 	return NewFromSelector(ss)
@@ -263,7 +266,7 @@ func (c *Client) dial(addr net.Addr) (net.Conn, error) {
 		err error
 	}
 
-	ctx := context.Background()
+	//ctx := context.Background()
 
 	nc, err := appnet.DialTimeout(ctx, addr.Network(), addr.String(), c.netTimeout())
 	if err == nil {
