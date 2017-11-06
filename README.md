@@ -1,13 +1,11 @@
-DO NOT USE! DOES NOT WORK, JUST USING AS A TEMPORARY STAGING AREA
-
-## Brian's Fucking It Up...
+## Brian's F*#%ing It Up...
 
 Bradfitz's Golang Memcached client package is awesome, except when doing something goofy (like trying to deploy a memcached Compute Engine instance and make it talk to App Engine Standard -- what the hell, you ask? Trying to work around Cloud Functions' Node.js inability to talk to App Engine Memcache gracefully). This is my attempt to merge the App Engine Socket: http://google.golang.org/appengine/socket with Brad's masterpiece...
 
 Viewer Discretion Advised - I have no clue what I'm doing.
 
 
-(From the original):
+(From Brad's original):
 ## About
 
 This is a memcache client library for the Go programming language
