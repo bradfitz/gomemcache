@@ -257,23 +257,23 @@ func (cte *ConnectTimeoutError) Error() string {
 	return "memcache: connect timeout to " + cte.Addr.String()
 }
 
-func (c *Client) dial(addr net.Addr) (appnet.Conn, error) {
+func (c *Client) dial(addr net.Addr) (net.Conn, error) {
 	type connError struct {
 		cn  appnet.Conn
 		err error
 	}
 
-	ctx := context.Background() 
+	ctx := context.Background()
 
 	nc, err := appnet.DialTimeout(ctx, addr.Network(), addr.String(), c.netTimeout())
 	if err == nil {
-		return *nc, nil
+		return nc, nil
 	}
 
-	var impT appnet.Conn
+	var impT net.Conn
 
 	if ne, ok := err.(net.Error); ok && ne.Timeout() {
-		return impT, &ConnectTimeoutError{addr} 
+		return impT, &ConnectTimeoutError{addr}
 	}
 
 	return impT, err
