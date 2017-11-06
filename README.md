@@ -1,8 +1,8 @@
 ## Brian's F*#%ing It Up...
 
-Bradfitz's Golang Memcached client package is awesome, except when doing something goofy (like trying to deploy a memcached Compute Engine instance and make it talk to App Engine Standard -- what the hell, you ask? Trying to work around Cloud Functions' Node.js inability to talk to App Engine Memcache gracefully). This is my attempt to merge the App Engine Socket: http://google.golang.org/appengine/socket with Brad's masterpiece...
+Using Brad Fitzpatrick's code (https://github.com/bradfitz/gomemcache) and making it work on App Engine Standard Environment
 
-Viewer Discretion Advised - I have no clue what I'm doing.
+Bradfitz's Golang Memcached client package is awesome, except when doing something goofy (like trying to deploy a memcached Compute Engine instance and make it talk to App Engine Standard -- what the hell, you ask? Trying to work around Cloud Functions' Node.js inability to talk to App Engine Memcache gracefully). This is my attempt to merge the App Engine Socket: http://google.golang.org/appengine/socket with Brad's masterpiece...
 
 
 (From Brad's original):
