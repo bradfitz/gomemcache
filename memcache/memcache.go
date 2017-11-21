@@ -113,6 +113,8 @@ var (
 	resultTouched   = []byte("TOUCHED\r\n")
 
 	resultClientErrorPrefix = []byte("CLIENT_ERROR ")
+
+	valuePrefix = []byte("VALUE ")
 )
 
 // New returns a memcache client using the provided server(s)
@@ -495,6 +497,51 @@ func parseGetResponse(r *bufio.Reader, cb func(*Item)) error {
 
 // scanGetResponseLine populates it and returns the declared size of the item.
 // It does not read the bytes of the item.
+// This should be equivalent to the commented out code, which was more time consuming due to reflection in Sscanf.
+func scanGetResponseLine(line []byte, it *Item) (size int, err error) {
+	if len(line) < 13 {
+		// "VALUE x 0 1\r\n" is the shortest possible message, and that is 13 bytes long.
+		return -1, fmt.Errorf("Line is too short: %q", line)
+	}
+	if !bytes.Equal(line[:6], valuePrefix) {
+		return -1, fmt.Errorf("Expected line to begin with \"VALUE \": %q", line)
+	}
+	if !bytes.Equal(line[len(line)-2:], crlf) {
+		return -1, fmt.Errorf("Expected line to end with \\r\\n: %q", line)
+	}
+	line = line[6 : len(line)-2]
+	parts := bytes.Split(line, space)
+	// pattern := "VALUE %s %d %d %d\r\n"
+	// dest := []interface{}{&it.Key, &it.Flags, &size, &it.casid}
+	partsCount := len(parts)
+	if partsCount < 3 || partsCount > 4 {
+		return -1, fmt.Errorf("Expected line to match %s %s %d [%d]: got %q", line)
+	}
+	// "%s %d %d\n"
+	it.Key = string(parts[0])
+	if it.Key == "" {
+		return -1, fmt.Errorf("memcache: unexpected empty key in %q: %v", line, err)
+	}
+	flagsRaw, err := strconv.ParseUint(string(parts[1]), 10, 32)
+	it.Flags = uint32(flagsRaw)
+	if err != nil {
+		return -1, fmt.Errorf("memcache: unexpected flags in %q: %v", line, err)
+	}
+	sizeRaw, err := strconv.ParseInt(string(parts[2]), 10, 0)
+	if err != nil {
+		return -1, fmt.Errorf("memcache: unexpected size in %q: %v", line, err)
+	}
+	if partsCount >= 4 {
+		// "%s %d %d %d\n"
+		it.casid, err = strconv.ParseUint(string(parts[3]), 10, 64)
+		if err != nil {
+			return -1, fmt.Errorf("memcache: unexpected casid in %q: %v", line, err)
+		}
+	}
+	return int(sizeRaw), nil
+}
+
+/*
 func scanGetResponseLine(line []byte, it *Item) (size int, err error) {
 	pattern := "VALUE %s %d %d %d\r\n"
 	dest := []interface{}{&it.Key, &it.Flags, &size, &it.casid}
@@ -508,6 +555,7 @@ func scanGetResponseLine(line []byte, it *Item) (size int, err error) {
 	}
 	return size, nil
 }
+*/
 
 // Set writes the given item, unconditionally.
 func (c *Client) Set(item *Item) error {
