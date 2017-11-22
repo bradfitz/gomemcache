@@ -515,7 +515,7 @@ func scanGetResponseLine(line []byte, it *Item) (size int, err error) {
 	// dest := []interface{}{&it.Key, &it.Flags, &size, &it.casid}
 	partsCount := len(parts)
 	if partsCount < 3 || partsCount > 4 {
-		return -1, fmt.Errorf("Expected line to match %s %s %d [%d]: got %q", line)
+		return -1, fmt.Errorf("Expected line to match %%s %%s %%d [%%d]: got %q", line)
 	}
 	// "%s %d %d\n"
 	it.Key = string(parts[0])
