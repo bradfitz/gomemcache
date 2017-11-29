@@ -480,7 +480,7 @@ func parseGetResponse(r *bufio.Reader, cb func(*Item)) error {
 		if err != nil {
 			return err
 		}
-		it.Value = make([]byte, size+2, size+2)
+		it.Value = make([]byte, size+2)
 		_, err = io.ReadFull(r, it.Value)
 		if err != nil {
 			it.Value = nil
