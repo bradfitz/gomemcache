@@ -43,7 +43,17 @@ func TestLocalhost(t *testing.T) {
 	if !setup(t) {
 		return
 	}
-	testWithClient(t, New(testServer))
+	c, err := New(testServer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	testWithClient(t, c)
+}
+
+func TestNewError(t *testing.T) {
+	if _, err := New("memcached.invalid:11211"); err == nil {
+		t.Errorf("expected invalid host to raise error, got none")
+	}
 }
 
 // Run the memcached binary as a child process and connect to its unix socket.
@@ -65,7 +75,11 @@ func TestUnixSocket(t *testing.T) {
 		time.Sleep(time.Duration(25*i) * time.Millisecond)
 	}
 
-	testWithClient(t, New(sock))
+	c, err := New(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	testWithClient(t, c)
 }
 
 func mustSetF(t *testing.T, c *Client) func(*Item) {
