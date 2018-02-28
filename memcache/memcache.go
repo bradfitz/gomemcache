@@ -324,6 +324,46 @@ func (c *Client) Get(key string) (item *Item, err error) {
 	return
 }
 
+
+// Get Stats as an array of String
+func (c *Client) Stats() ([]string, error) {
+	addr, err := c.selector.PickServer("tmp")
+	if err != nil {
+		return nil,err
+	}
+	return c.getStatsFromAddr(addr)
+}
+
+func (c *Client) getStatsFromAddr(addr net.Addr) ([]string,error) {
+	cn, err := c.getConn(addr)
+	if err != nil {
+		return nil,err
+	}
+	defer cn.condRelease(&err)
+
+	if _, err := fmt.Fprintf(cn.rw, "stats\r\n"); err != nil {
+		return nil,err
+	}
+	if err := cn.rw.Flush(); err != nil {
+		return nil,err
+	}
+	return  parseStatsResponse(cn.rw.Reader)
+}
+
+func parseStatsResponse(r *bufio.Reader) ([]string,error) {
+	stats := []string{}
+	for {
+		line, err := r.ReadSlice('\n')
+		if err != nil {
+			return stats,err
+		}
+		if bytes.Equal(line, resultEnd) {
+			return stats,nil
+		}
+		stats = append(stats,string(line))
+	}
+}
+
 // Touch updates the expiry for the given key. The seconds parameter is either
 // a Unix timestamp or, if seconds is less than 1 month, the number of seconds
 // into the future at which time the item will expire. ErrCacheMiss is returned if the
@@ -333,6 +373,8 @@ func (c *Client) Touch(key string, seconds int32) (err error) {
 		return c.touchFromAddr(addr, []string{key}, seconds)
 	})
 }
+
+
 
 func (c *Client) withKeyAddr(key string, fn func(net.Addr) error) (err error) {
 	if !legalKey(key) {
