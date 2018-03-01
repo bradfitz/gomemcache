@@ -331,17 +331,33 @@ func (c *Client) Stats() ([]string, error) {
 	if err != nil {
 		return nil,err
 	}
-	return c.getStatsFromAddr(addr)
+	return c.getStatsFromAddr(addr,"stats\r\n")
 }
 
-func (c *Client) getStatsFromAddr(addr net.Addr) ([]string,error) {
+func (c *Client) ItemStats() ([]string, error) {
+	addr, err := c.selector.PickServer("tmp")
+	if err != nil {
+		return nil,err
+	}
+	return c.getStatsFromAddr(addr,"stats items\r\n")
+}
+
+func (c *Client) SlabsStats() ([]string, error) {
+	addr, err := c.selector.PickServer("tmp")
+	if err != nil {
+		return nil,err
+	}
+	return c.getStatsFromAddr(addr,"stats slabs\r\n")
+}
+
+func (c *Client) getStatsFromAddr(addr net.Addr,command string) ([]string,error) {
 	cn, err := c.getConn(addr)
 	if err != nil {
 		return nil,err
 	}
 	defer cn.condRelease(&err)
 
-	if _, err := fmt.Fprintf(cn.rw, "stats\r\n"); err != nil {
+	if _, err := fmt.Fprintf(cn.rw, command); err != nil {
 		return nil,err
 	}
 	if err := cn.rw.Flush(); err != nil {
