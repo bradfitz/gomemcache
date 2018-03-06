@@ -114,10 +114,13 @@ var (
 // New returns a memcache client using the provided server(s)
 // with equal weight. If a server is listed multiple times,
 // it gets a proportional amount of weight.
-func New(server ...string) *Client {
+func New(server ...string) (*Client, error) {
 	ss := new(RRServerList)
-	ss.SetServers(server...)
-	return NewFromSelector(ss)
+	err := ss.SetServers(server...)
+	if err != nil {
+		return nil, err
+	}
+	return NewFromSelector(ss), nil
 }
 
 // NewFromSelector returns a new Client using the provided ServerSelector.
@@ -190,14 +193,16 @@ func (cn *conn) condRelease(err *error) {
 	}
 }
 
-func (c *Client) UpdateServerList(server ...string) {
+func (c *Client) UpdateServerList(server ...string) error {
 	// There's a race here still when this function is interleaved between
 	// getFreeConn and putFreeConn resulting in possibly leaving some orphaned
 	// connections behind for servers that are no longer in the list
 	c.lk.Lock()
 	defer c.lk.Unlock()
-	c.selector.SetServers(server...)
+	err := c.selector.SetServers(server...)
 	c.closeUnlocked()
+
+	return err
 }
 
 func (c *Client) putFreeConn(addr net.Addr, cn *conn) {
