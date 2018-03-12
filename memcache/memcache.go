@@ -337,6 +337,10 @@ func (c *Client) Get(key string) (item *Item, err error) {
 		err = ErrCacheMiss
 	} else if err == nil {
 		c.selector.CacheHit()
+	} else if err != nil {
+		// Record a cache miss for misbehaving servers to take them out of the
+		// rotation
+		c.selector.CacheMiss()
 	}
 	return
 }
