@@ -30,6 +30,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/deckarep/golang-set"
 )
 
 // Similar to:
@@ -68,7 +70,9 @@ var (
 const DefaultTimeout = 100 * time.Millisecond
 
 const (
-	buffered = 8 // arbitrary buffered channel size, for readability
+	buffered     = 8 // arbitrary buffered channel size, for readability
+	openMessage  = "/open"
+	closeMessage = "/close"
 )
 
 // resumableError returns true if err is only a protocol-level cache error.
@@ -125,7 +129,23 @@ func New(server ...string) (*Client, error) {
 
 // NewFromSelector returns a new Client using the provided ServerSelector.
 func NewFromSelector(ss ServerSelector) *Client {
-	return &Client{selector: ss, MaxConns: 2}
+	return &Client{selector: ss, MaxConns: 2, keys: mapset.NewSet()}
+}
+
+// NewWithQueues returns a memcache client using the provided server(s)
+// and attach each server a list of queues.
+func NewWithQueues(server, queue []string) (*Client, error) {
+	ss := new(RRServerList)
+	if err := ss.SetServers(server...); err != nil {
+		return nil, err
+	}
+	ss.SetQueues(queue...)
+
+	newSet := make([]interface{}, len(queue))
+	for i := 0; i < len(queue); i++ {
+		newSet[i] = queue[i]
+	}
+	return &Client{selector: ss, MaxConns: 2, keys: mapset.NewSetFromSlice(newSet)}, nil
 }
 
 // Client is a memcache client.
@@ -141,6 +161,7 @@ type Client struct {
 
 	lk       sync.Mutex
 	freeconn map[string][]*conn
+	keys     mapset.Set
 }
 
 // Item is an item to be got or stored in a memcached server.
@@ -203,6 +224,20 @@ func (c *Client) UpdateServerList(server ...string) error {
 	c.closeUnlocked()
 
 	return err
+}
+
+func (c *Client) UpdateQueueList(queue ...string) {
+	newSet := make([]interface{}, len(queue))
+	for i := 0; i < len(queue); i++ {
+		newSet[i] = queue[i]
+	}
+
+	if newKeys := mapset.NewSetFromSlice(newSet); !c.keys.Equal(newKeys) {
+		c.selector.SetQueues(queue...)
+		c.lk.Lock()
+		c.keys = newKeys
+		c.lk.Unlock()
+	}
 }
 
 func (c *Client) putFreeConn(addr net.Addr, cn *conn) {
@@ -343,6 +378,51 @@ func (c *Client) Get(key string) (item *Item, err error) {
 		c.selector.CacheMiss()
 	}
 	return
+}
+
+// GetNext() gets the item for the next available queue.  ErrCacheMiss is returned for a
+// memcache cache miss.  It uses Kestrel's reliable read, so a follow-up CloseMessage()
+// call is needed.
+func (c *Client) GetNext() (item *Item, err error) {
+	err = c.withAddr(func(addr net.Addr, key string) error {
+		return c.getFromAddrSingle(addr, key+openMessage, func(it *Item) { item = it })
+	})
+	if err == nil {
+		if item == nil {
+			c.selector.QueueCacheMiss()
+			err = ErrCacheMiss
+		} else {
+			c.selector.QueueCacheHit()
+		}
+	} else {
+		// Attenuate access to a possibly bad server
+		c.serverMisbehaving()
+	}
+
+	return
+}
+
+func (c *Client) serverMisbehaving() {
+	c.selector.ServerMisbehaving()
+}
+
+func (c *Client) withAddr(fn func(net.Addr, string) error) (err error) {
+	addr, key, err := c.selector.PickQueue()
+	if err != nil {
+		return err
+	}
+	return fn(addr, key)
+}
+
+// CloseMessage() call should follow GetNext() call to properly close the message.
+func (c *Client) CloseMessage() (err error) {
+	addr, key := c.selector.GetCurrQueue()
+	return c.getFromAddrSingle(addr, key+closeMessage, func(it *Item) {})
+}
+
+func (c *Client) GetCurrentQueueName() string {
+	_, key := c.selector.GetCurrQueue()
+	return key
 }
 
 // Touch updates the expiry for the given key. The seconds parameter is either

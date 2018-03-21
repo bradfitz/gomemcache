@@ -33,9 +33,17 @@ type ServerSelector interface {
 	// should be shared onto.
 	SetServers(servers ...string) error
 	PickServer(key string) (net.Addr, error)
+	// Returns server address, queue name and error
+	PickQueue() (net.Addr, string, error)
 	Each(func(net.Addr) error) error
 	CacheMiss()
 	CacheHit()
+	QueueCacheMiss()
+	QueueCacheHit()
+	SetQueues(queues ...string)
+	GetCurrQueue() (net.Addr, string)
+	GetQueues() []string
+	ServerMisbehaving()
 }
 
 // ServerList is a simple ServerSelector. Its zero value is usable.
@@ -117,5 +125,12 @@ func (ss *ServerList) PickServer(key string) (net.Addr, error) {
 }
 
 // No-ops in this selector
-func (ss *ServerList) CacheHit()  {}
-func (ss *ServerList) CacheMiss() {}
+func (ss *ServerList) CacheHit()                            {}
+func (ss *ServerList) CacheMiss()                           {}
+func (ss *ServerList) QueueCacheHit()                       {}
+func (ss *ServerList) QueueCacheMiss()                      {}
+func (ss *ServerList) SetQueues(queues ...string)           {}
+func (ss *ServerList) GetCurrQueue() (net.Addr, string)     { return nil, "" }
+func (ss *ServerList) PickQueue() (net.Addr, string, error) { return nil, "", nil }
+func (ss *ServerList) GetQueues() []string                  { return nil }
+func (ss *ServerList) ServerMisbehaving()                   {}
