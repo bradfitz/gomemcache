@@ -17,10 +17,13 @@ limitations under the License.
 package memcache
 
 import (
+	"context"
 	"hash/crc32"
 	"net"
 	"strings"
 	"sync"
+
+	"go.opencensus.io/trace"
 )
 
 // ServerSelector is the interface that selects a memcache server
@@ -32,7 +35,7 @@ type ServerSelector interface {
 	// PickServer returns the server address that a given item
 	// should be shared onto.
 	PickServer(key string) (net.Addr, error)
-	Each(func(net.Addr) error) error
+	Each(context.Context, func(context.Context, net.Addr) error) error
 }
 
 // ServerList is a simple ServerSelector. Its zero value is usable.
@@ -90,11 +93,17 @@ func (ss *ServerList) SetServers(servers ...string) error {
 }
 
 // Each iterates over each server calling the given function
-func (ss *ServerList) Each(f func(net.Addr) error) error {
+func (ss *ServerList) Each(ctx context.Context, f func(context.Context, net.Addr) error) error {
+	ctx, span := trace.StartSpan(ctx, "memcache.(*ServerList).Each")
+	defer span.End()
+
 	ss.mu.RLock()
 	defer ss.mu.RUnlock()
+	span.Annotate([]trace.Attribute{
+		trace.Int64Attribute("n", int64(len(ss.addrs))),
+	}, "Iterating over addresses")
 	for _, a := range ss.addrs {
-		if err := f(a); nil != err {
+		if err := f(ctx, a); nil != err {
 			return err
 		}
 	}
