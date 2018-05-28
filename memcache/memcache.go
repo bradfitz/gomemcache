@@ -33,7 +33,7 @@ import (
 )
 
 // Similar to:
-// http://code.google.com/appengine/docs/go/memcache/reference.html
+// https://godoc.org/google.golang.org/appengine/memcache
 
 var (
 	// ErrCacheMiss means that a Get failed because the item wasn't present.
