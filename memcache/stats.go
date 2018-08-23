@@ -17,8 +17,11 @@ limitations under the License.
 package memcache
 
 import (
+	"time"
+
 	"go.opencensus.io/stats"
 	"go.opencensus.io/stats/view"
+	"go.opencensus.io/tag"
 )
 
 const unitDimensionless = "1"
@@ -27,27 +30,22 @@ var (
 	// Stats
 	mCacheMisses     = stats.Int64("cache_misses", "Number of cache misses", unitDimensionless)
 	mCacheHits       = stats.Int64("cache_hits", "Number of cache hits", unitDimensionless)
-	mClientErrors    = stats.Int64("client_errors", "Number of general client errors", unitDimensionless)
-	mParseErrors     = stats.Int64("parse_errors", "Number of errors encountered while parsing", unitDimensionless)
+	mErrors          = stats.Int64("errors", "Number of errors", unitDimensionless)
 	mIllegalKeys     = stats.Int64("illegal_key", "Number of illegal keys", unitDimensionless)
 	mCASConflicts    = stats.Int64("cas_conflicts", "Number of CAS conflicts", unitDimensionless)
 	mUnstoredResults = stats.Int64("unstored_results", "Number of unstored results", unitDimensionless)
 	mDialErrors      = stats.Int64("dial_errors", "Number of dial errors", unitDimensionless)
+	mDelta           = stats.Int64("delta", "The values of deltas used in increment or decrement operations", unitDimensionless)
 
-	mFlushAll       = stats.Int64("flushall", "Number of FlushAll invocations", unitDimensionless)
-	mGet            = stats.Int64("get", "Number of Get invocations", unitDimensionless)
-	mTouch          = stats.Int64("touch", "Number of Touch invocations", unitDimensionless)
-	mKeyLength      = stats.Int64("key_length", "Measures the length of keys", unitDimensionless)
-	mValueLength    = stats.Int64("key_length", "Measures the length of values", unitDimensionless)
-	mSet            = stats.Int64("set", "Number of Set invocations", unitDimensionless)
-	mAdd            = stats.Int64("add", "Number of Add invocations", unitDimensionless)
-	mDelete         = stats.Int64("delete", "Number of Delete invocations", unitDimensionless)
-	mDeleteAll      = stats.Int64("deleteall", "Number of DeleteAll invocations", unitDimensionless)
-	mDelta          = stats.Int64("delta", "Number of Delta invocations", unitDimensionless)
-	mCompareAndSwap = stats.Int64("delta", "Number of Delta invocations", unitDimensionless)
-	mReplace        = stats.Int64("replace ", "Number of Replace invocations", unitDimensionless)
-	mDecrement      = stats.Int64("decrement", "Number of Decrement invocations", unitDimensionless)
-	mIncrement      = stats.Int64("increment", "Number of Increment invocations", unitDimensionless)
+	mCalls       = stats.Int64("calls", "The number of calls to Memcache, they are disambiguated by a method key", unitDimensionless)
+	mKeyLength   = stats.Int64("key_length", "Measures the length of keys", "By")
+	mValueLength = stats.Int64("key_length", "Measures the length of values", "By")
+	mLatencyMs   = stats.Float64("latency", "Measures the latency of the various methods", "ms")
+
+	// TagKeys
+	keyMethod, _ = tag.NewKey("method")
+	keyReason, _ = tag.NewKey("reason")
+	keyType, _   = tag.NewKey("type")
 
 	// Views
 	AllViews = []*view.View{
@@ -64,16 +62,11 @@ var (
 			Aggregation: view.Count(),
 		},
 		{
-			Name:        "gomemcache/client_errors",
-			Description: "Number of general client errors",
-			Measure:     mClientErrors,
+			Name:        "gomemcache/errors",
+			Description: "Number of errors",
+			Measure:     mErrors,
 			Aggregation: view.Count(),
-		},
-		{
-			Name:        "gomemcache/parse_errors",
-			Description: "Number of errors encountered while parsing",
-			Measure:     mParseErrors,
-			Aggregation: view.Count(),
+			TagKeys:     []tag.Key{keyMethod, keyReason, keyType},
 		},
 		{
 			Name:        "gomemcache/illegal_keys",
@@ -99,25 +92,6 @@ var (
 			Measure:     mDialErrors,
 			Aggregation: view.Count(),
 		},
-
-		{
-			Name:        "gomemcache/flushall",
-			Description: "Number of FlushAll invocations",
-			Measure:     mFlushAll,
-			Aggregation: view.Count(),
-		},
-		{
-			Name:        "gomemcache/get",
-			Description: "Number of Get invocations",
-			Measure:     mGet,
-			Aggregation: view.Count(),
-		},
-		{
-			Name:        "gomemcache/touch",
-			Description: "Number of Touch invocations",
-			Measure:     mTouch,
-			Aggregation: view.Count(),
-		},
 		{
 			Name:        "gomemcache/key_length",
 			Description: "The distribution of the lengths of keys",
@@ -141,35 +115,22 @@ var (
 				9223372036854775808,
 			),
 		},
+
 		{
-			Name:        "gomemcache/set",
-			Description: "Number of Set invocations",
-			Measure:     mSet,
+			Name:        "gomemcache/calls",
+			Description: "Number of the various method invocations",
+			Measure:     mCalls,
+			TagKeys:     []tag.Key{keyMethod},
 			Aggregation: view.Count(),
 		},
 		{
-			Name:        "gomemcache/add",
-			Description: "Number of Add invocations",
-			Measure:     mSet,
-			Aggregation: view.Count(),
-		},
-		{
-			Name:        "gomemcache/delete",
-			Description: "Number of Delete invocations",
-			Measure:     mDelete,
-			Aggregation: view.Count(),
-		},
-		{
-			Name:        "gomemcache/replace",
-			Description: "Number of Replace invocations",
-			Measure:     mReplace,
-			Aggregation: view.Count(),
-		},
-		{
-			Name:        "gomemcache/cas",
-			Description: "Number of CompareAndSwap invocations",
-			Measure:     mCompareAndSwap,
-			Aggregation: view.Count(),
+			Name:        "gomemcache/latency",
+			Description: "The distribution of the latencies in milliseconds",
+			Measure:     mLatencyMs,
+			TagKeys:     []tag.Key{keyMethod},
+			Aggregation: view.Distribution(
+				// [0ms, 0.001ms, 0.005ms, 0.01ms, 0.05ms, 0.1ms, 0.5ms, 1ms, 1.5ms, 2ms, 2.5ms, 5ms, 10ms, 25ms, 50ms, 100ms, 200ms, 400ms, 600ms, 800ms, 1s, 1.5s, 2.5s, 5s, 10s, 20s, 40s, 100s, 200s, 500s]
+				0.0, 0.000001, 0.000005, 0.00001, 0.00005, 0.0001, 0.0005, 0.001, 0.0015, 0.002, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.2, 0.4, 0.6, 0.8, 1.0, 1.5, 2.5, 5.0, 10.0, 20.0, 40.0, 100.0, 200.0, 500.0),
 		},
 		{
 			Name:        "gomemcache/delta",
@@ -177,23 +138,9 @@ var (
 			Measure:     mDelta,
 			Aggregation: view.Distribution(0, 25, 50, 100, 200, 250, 400, 500, 800, 1000, 1400, 1600, 3200, 5000, 10000, 100000, 1000000),
 		},
-		{
-			Name:        "gomemcache/deleteall",
-			Description: "Number of DeleteAll invocations",
-			Measure:     mDeleteAll,
-			Aggregation: view.Count(),
-		},
-		{
-			Name:        "gomemcache/decrement",
-			Description: "Number of Decrement invocations",
-			Measure:     mDecrement,
-			Aggregation: view.Count(),
-		},
-		{
-			Name:        "gomemcache/inccrement",
-			Description: "Number of Increment invocations",
-			Measure:     mIncrement,
-			Aggregation: view.Count(),
-		},
 	}
 )
+
+func sinceInMs(startTime time.Time) float64 {
+	return float64(time.Since(startTime).Nanoseconds()) / 1e6
+}
