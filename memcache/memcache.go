@@ -32,8 +32,6 @@ import (
 	"time"
 
 	"go.opencensus.io/stats"
-	"go.opencensus.io/tag"
-	"go.opencensus.io/trace"
 )
 
 // Similar to:
@@ -258,13 +256,16 @@ func (cte *ConnectTimeoutError) Error() string {
 	return "memcache: connect timeout to " + cte.Addr.String()
 }
 
-func (c *Client) dial(ctx context.Context, addr net.Addr) (net.Conn, error) {
+func (c *Client) dial(ctx context.Context, addr net.Addr) (nc net.Conn, err error) {
+	ctx, lts := newLatencyTrackingSpan(ctx, "gomemcache.Client.dial")
+	defer lts.end(ctx, err)
+
 	type connError struct {
 		cn  net.Conn
 		err error
 	}
 
-	nc, err := net.DialTimeout(addr.Network(), addr.String(), c.netTimeout())
+	nc, err = net.DialTimeout(addr.Network(), addr.String(), c.netTimeout())
 	if err == nil {
 		return nc, nil
 	}
@@ -276,22 +277,22 @@ func (c *Client) dial(ctx context.Context, addr net.Addr) (net.Conn, error) {
 	return nil, err
 }
 
-func (c *Client) getConn(ctx context.Context, addr net.Addr) (*conn, error) {
-	ctx, span := trace.StartSpan(ctx, "memcache.(*Client).getConn")
-	defer span.End()
+func (c *Client) getConn(ctx context.Context, addr net.Addr) (cn *conn, err error) {
+	ctx, lts := newLatencyTrackingSpan(ctx, "gomemcache.Client.getConn")
+	defer func() {
+		// In this defer so that the value of err
+		// will be evaluated at return time instead
+		// at present as per defer semantics.
+		lts.end(ctx, err)
+	}()
 
-	span.Annotate(nil, "Getting a free connection")
 	cn, ok := c.getFreeConn(addr)
-	span.Annotate(nil, "Finished getting a free connection")
 	if ok {
 		cn.extendDeadline()
 		return cn, nil
 	}
-	span.Annotate(nil, "Dialing the address")
 	nc, err := c.dial(ctx, addr)
-	span.Annotate(nil, "Finished dialing the address")
 	if err != nil {
-		span.SetStatus(trace.Status{Code: trace.StatusCodeUnknown, Message: err.Error()})
 		return nil, err
 	}
 	cn = &conn{
@@ -300,87 +301,48 @@ func (c *Client) getConn(ctx context.Context, addr net.Addr) (*conn, error) {
 		rw:   bufio.NewReadWriter(bufio.NewReader(nc), bufio.NewWriter(nc)),
 		c:    c,
 	}
-	span.Annotate(nil, "Extending the connection's deadline")
 	cn.extendDeadline()
-	span.Annotate(nil, "Finished extending the connection's deadline")
 	return cn, nil
 }
 
 func (c *Client) onItem(ctx context.Context, item *Item, fn func(*Client, context.Context, *bufio.ReadWriter, *Item) error) error {
-	ctx, span := trace.StartSpan(ctx, "memcache.(*Client).onItem")
-	defer span.End()
-
-	span.Annotate([]trace.Attribute{
-		trace.StringAttribute("key", item.Key),
-	}, "Picking a server")
 	addr, err := c.selector.PickServer(item.Key)
 	if err != nil {
-		span.SetStatus(trace.Status{Code: trace.StatusCodeUnknown, Message: err.Error()})
 		return err
 	}
-	span.Annotate(nil, "Successfully picked a server")
 
-	span.Annotate(nil, "Getting a connection")
 	cn, err := c.getConn(ctx, addr)
 	if err != nil {
-		span.SetStatus(trace.Status{Code: trace.StatusCodeUnknown, Message: err.Error()})
 		return err
 	}
 	defer cn.condRelease(&err)
 
-	span.Annotate(nil, "Successfully got a connection")
-	if err = fn(c, ctx, cn.rw, item); err != nil {
-		return err
-	}
-	return nil
+	return fn(c, ctx, cn.rw, item)
 }
 
 func (c *Client) FlushAll(ctx context.Context) error {
-	startTime := time.Now()
-	ctx, _ = tag.New(ctx, tag.Upsert(keyMethod, "flush_all"))
-	ctx, span := trace.StartSpan(ctx, "memcache.(*Client).FlushAll")
+	ctx, lts := newLatencyTrackingSpan(ctx, "gomemcache.Client.FlushAll")
 
 	err := c.selector.Each(ctx, c.flushAllFromAddr)
-	if err != nil {
-		ctx, _ = tag.New(ctx, tag.Upsert(keyReason, err.Error()))
-		span.SetStatus(trace.Status{Code: trace.StatusCodeInternal, Message: err.Error()})
-		stats.Record(ctx, mErrors.M(1))
-	}
-	stats.Record(ctx, mCalls.M(1), mLatencyMs.M(sinceInMs(startTime)))
-	span.End()
+
+	lts.end(ctx, err)
+
 	return err
 }
 
 // Get gets the item for the given key. ErrCacheMiss is returned for a
 // memcache cache miss. The key must be at most 250 bytes in length.
 func (c *Client) Get(ctx context.Context, key string) (item *Item, err error) {
-	startTime := time.Now()
-	ctx, _ = tag.New(ctx, tag.Upsert(keyMethod, "get"))
-	ctx, span := trace.StartSpan(ctx, "memcache.(*Client).Get")
-	msl := []stats.Measurement{mCalls.M(1), mKeyLength.M(int64(len(key)))}
-	defer func() {
-		if item != nil {
-			msl = append(msl, mValueLength.M(int64(len(item.Value))))
-		}
-		if err != nil {
-			ctx, _ = tag.New(ctx, tag.Upsert(keyReason, err.Error()))
-			msl = append(msl, mErrors.M(1))
-		}
-		msl = append(msl, mLatencyMs.M(sinceInMs(startTime)))
-		stats.Record(ctx, msl...)
-		span.End()
-	}()
+	ctx, lts := newLatencyTrackingSpan(ctx, "gomemcache.Client.Get")
 
 	err = c.withKeyAddr(ctx, key, func(addr net.Addr) error {
 		return c.getFromAddr(ctx, addr, []string{key}, func(it *Item) { item = it })
 	})
 	if err == nil && item == nil {
 		err = ErrCacheMiss
-		span.SetStatus(trace.Status{Code: trace.StatusCodeNotFound, Message: ErrCacheMiss.Error()})
-		stats.Record(ctx, mCacheMisses.M(1))
-	} else if item != nil {
-		stats.Record(ctx, mCacheHits.M(1))
 	}
+
+	lts.end(ctx, err)
 	return
 }
 
@@ -389,28 +351,17 @@ func (c *Client) Get(ctx context.Context, key string) (item *Item, err error) {
 // into the future at which time the item will expire. Zero means the item has
 // no expiration time. ErrCacheMiss is returned if the key is not in the cache.
 // The key must be at most 250 bytes in length.
-func (c *Client) Touch(ctx context.Context, key string, seconds int32) (err error) {
-	startTime := time.Now()
-	ctx, _ = tag.New(ctx, tag.Upsert(keyMethod, "touch"))
-	ctx, span := trace.StartSpan(ctx, "memcache.(*Client).Touch")
-	defer func() {
-		if err != nil {
-			ctx, _ = tag.New(ctx, tag.Upsert(keyReason, err.Error()))
-			stats.Record(ctx, mErrors.M(1))
-		}
-		stats.Record(ctx, mCalls.M(1), mKeyLength.M(int64(len(key))), mLatencyMs.M(sinceInMs(startTime)))
-		span.End()
-	}()
-
-	err = c.withKeyAddr(ctx, key, func(addr net.Addr) error {
+func (c *Client) Touch(ctx context.Context, key string, seconds int32) error {
+	ctx, lts := newLatencyTrackingSpan(ctx, "gomemcache.Client.Touch")
+	err := c.withKeyAddr(ctx, key, func(addr net.Addr) error {
 		return c.touchFromAddr(ctx, addr, []string{key}, seconds)
 	})
-	return
+	lts.end(ctx, err)
+	return err
 }
 
 func (c *Client) withKeyAddr(ctx context.Context, key string, fn func(net.Addr) error) (err error) {
 	if !legalKey(key) {
-		stats.Record(ctx, mIllegalKeys.M(1))
 		return ErrMalformedKey
 	}
 	addr, err := c.selector.PickServer(key)
@@ -436,9 +387,6 @@ func (c *Client) withKeyRw(ctx context.Context, key string, fn func(*bufio.ReadW
 }
 
 func (c *Client) getFromAddr(ctx context.Context, addr net.Addr, keys []string, cb func(*Item)) error {
-	ctx, span := trace.StartSpan(ctx, "memcache.(*Client).getFromAddr")
-	defer span.End()
-
 	return c.withAddrRw(ctx, addr, func(rw *bufio.ReadWriter) error {
 		if _, err := fmt.Fprintf(rw, "gets %s\r\n", strings.Join(keys, " ")); err != nil {
 			return err
@@ -507,22 +455,12 @@ func (c *Client) touchFromAddr(ctx context.Context, addr net.Addr, keys []string
 // cache misses. Each key must be at most 250 bytes in length.
 // If no error is returned, the returned map will also be non-nil.
 func (c *Client) GetMulti(ctx context.Context, keys []string) (m map[string]*Item, err error) {
-	ctx, _ = tag.New(ctx, tag.Upsert(keyMethod, "get_multi"))
-	startTime := time.Now()
-	ctx, span := trace.StartSpan(ctx, "memcache.(*Client).GetMulti")
-
-	msl := make([]stats.Measurement, 0, len(keys))
+	ctx, lts := newLatencyTrackingSpan(ctx, "gomemcache.Client.GetMulti")
+	var measurements []stats.Measurement
 	defer func() {
-		if err != nil {
-			ctx, _ = tag.New(ctx, tag.Upsert(keyReason, err.Error()))
-			msl = append(msl, mErrors.M(1))
-		}
-		msl = append(msl, mCalls.M(1), mLatencyMs.M(sinceInMs(startTime)))
-		stats.Record(ctx, msl...)
-		span.End()
+		lts.recordMeasurements(ctx, measurements...)
+		lts.end(ctx, err)
 	}()
-
-	span.Annotate([]trace.Attribute{trace.Int64Attribute("key_count", int64(len(keys)))}, "Getting multi")
 
 	var lk sync.Mutex
 	m = make(map[string]*Item)
@@ -530,26 +468,25 @@ func (c *Client) GetMulti(ctx context.Context, keys []string) (m map[string]*Ite
 		if it != nil {
 			lk.Lock()
 			m[it.Key] = it
-			msl = append(msl, mValueLength.M(int64(len(it.Value))))
+			// Survery of the length of values
+			measurements = append(measurements, mValueLength.M(int64(len(it.Value))))
 			lk.Unlock()
 		}
 	}
 
 	// Survey of the length of keys
 	for _, key := range keys {
-		msl = append(msl, mKeyLength.M(int64(len(key))))
+		measurements = append(measurements, mKeyLength.M(int64(len(key))))
 	}
 
 	keyMap := make(map[net.Addr][]string)
 	for _, key := range keys {
 		if !legalKey(key) {
-			stats.Record(ctx, mIllegalKeys.M(1))
 			err = ErrMalformedKey
 			return nil, err
 		}
 		addr, aErr := c.selector.PickServer(key)
 		if aErr != nil {
-			ctx, _ = tag.New(ctx, tag.Upsert(keyType, "pick_server"))
 			err = aErr
 			return nil, err
 		}
@@ -574,9 +511,6 @@ func (c *Client) GetMulti(ctx context.Context, keys []string) (m map[string]*Ite
 // parseGetResponse reads a GET response from r and calls cb for each
 // read and allocated Item
 func parseGetResponse(ctx context.Context, r *bufio.Reader, cb func(*Item)) error {
-	_, span := trace.StartSpan(ctx, "memcache.parseGetResponse")
-	defer span.End()
-
 	for {
 		line, err := r.ReadSlice('\n')
 		if err != nil {
@@ -623,9 +557,7 @@ func scanGetResponseLine(line []byte, it *Item) (size int, err error) {
 
 // Set writes the given item, unconditionally.
 func (c *Client) Set(ctx context.Context, item *Item) error {
-	startTime := time.Now()
-	ctx, _ = tag.New(ctx, tag.Upsert(keyMethod, "set"))
-	ctx, span := trace.StartSpan(ctx, "memcache.(*Client).Set")
+	ctx, lts := newLatencyTrackingSpan(ctx, "gomemcache.Client.Set")
 
 	keyLength := int64(0)
 	valueLength := int64(0)
@@ -639,12 +571,8 @@ func (c *Client) Set(ctx context.Context, item *Item) error {
 	}
 
 	err := c.onItem(ctx, item, (*Client).set)
-	if err != nil {
-		ctx, _ = tag.New(ctx, tag.Upsert(keyReason, err.Error()))
-		span.SetStatus(trace.Status{Code: trace.StatusCodeInternal, Message: err.Error()})
-		stats.Record(ctx, mErrors.M(1))
-	}
-	stats.Record(ctx, mCalls.M(1), mKeyLength.M(keyLength), mValueLength.M(valueLength), mLatencyMs.M(sinceInMs(startTime)))
+	lts.recordMeasurements(ctx, mKeyLength.M(keyLength), mValueLength.M(valueLength))
+	lts.end(ctx, err)
 
 	return err
 }
@@ -656,9 +584,7 @@ func (c *Client) set(ctx context.Context, rw *bufio.ReadWriter, item *Item) erro
 // Add writes the given item, if no value already exists for its
 // key. ErrNotStored is returned if that condition is not met.
 func (c *Client) Add(ctx context.Context, item *Item) error {
-	startTime := time.Now()
-	ctx, _ = tag.New(ctx, tag.Upsert(keyMethod, "add"))
-	ctx, span := trace.StartSpan(ctx, "memcache.(*Client).Add")
+	ctx, lts := newLatencyTrackingSpan(ctx, "gomemcache.Client.Add")
 
 	keyLength := int64(0)
 	valueLength := int64(0)
@@ -672,13 +598,9 @@ func (c *Client) Add(ctx context.Context, item *Item) error {
 	}
 
 	err := c.onItem(ctx, item, (*Client).add)
-	if err != nil {
-		ctx, _ = tag.New(ctx, tag.Upsert(keyReason, err.Error()))
-		span.SetStatus(trace.Status{Code: trace.StatusCodeInternal, Message: err.Error()})
-		stats.Record(ctx, mErrors.M(1))
-	}
+	lts.recordMeasurements(ctx, mKeyLength.M(keyLength), mValueLength.M(valueLength))
+	lts.end(ctx, err)
 
-	stats.Record(ctx, mCalls.M(1), mKeyLength.M(keyLength), mValueLength.M(valueLength), mLatencyMs.M(sinceInMs(startTime)))
 	return err
 }
 
@@ -689,12 +611,10 @@ func (c *Client) add(ctx context.Context, rw *bufio.ReadWriter, item *Item) erro
 // Replace writes the given item, but only if the server *does*
 // already hold data for this key
 func (c *Client) Replace(ctx context.Context, item *Item) error {
-	startTime := time.Now()
-	ctx, _ = tag.New(ctx, tag.Upsert(keyMethod, "replace"))
+	ctx, lts := newLatencyTrackingSpan(ctx, "gomemcache.Client.Replace")
+
 	keyLength := int64(0)
 	valueLength := int64(0)
-	ctx, span := trace.StartSpan(ctx, "memcache.(*Client).Replace")
-
 	if item != nil {
 		if item.Key != "" {
 			keyLength = int64(len(item.Key))
@@ -705,14 +625,8 @@ func (c *Client) Replace(ctx context.Context, item *Item) error {
 	}
 
 	err := c.onItem(ctx, item, (*Client).replace)
-	if err != nil {
-		ctx, _ = tag.New(ctx, tag.Upsert(keyReason, err.Error()))
-		span.SetStatus(trace.Status{Code: trace.StatusCodeInternal, Message: err.Error()})
-		stats.Record(ctx, mErrors.M(1))
-	}
-
-	stats.Record(ctx, mCalls.M(1), mKeyLength.M(keyLength), mValueLength.M(valueLength), mLatencyMs.M(sinceInMs(startTime)))
-	span.End()
+	lts.recordMeasurements(ctx, mKeyLength.M(keyLength), mValueLength.M(valueLength))
+	lts.end(ctx, err)
 
 	return err
 }
@@ -729,9 +643,7 @@ func (c *Client) replace(ctx context.Context, rw *bufio.ReadWriter, item *Item) 
 // calls. ErrNotStored is returned if the value was evicted in between
 // the calls.
 func (c *Client) CompareAndSwap(ctx context.Context, item *Item) error {
-	startTime := time.Now()
-	ctx, _ = tag.New(ctx, tag.Upsert(keyMethod, "cas"))
-	ctx, span := trace.StartSpan(ctx, "memcache.(*Client).CompareAndSwap")
+	ctx, lts := newLatencyTrackingSpan(ctx, "gomemcache.Client.CompareAndSwap")
 
 	keyLength := int64(0)
 	valueLength := int64(0)
@@ -745,14 +657,8 @@ func (c *Client) CompareAndSwap(ctx context.Context, item *Item) error {
 	}
 
 	err := c.onItem(ctx, item, (*Client).cas)
-	if err != nil {
-		ctx, _ = tag.New(ctx, tag.Upsert(keyReason, err.Error()))
-		span.SetStatus(trace.Status{Code: trace.StatusCodeInternal, Message: err.Error()})
-		stats.Record(ctx, mErrors.M(1))
-	}
-
-	stats.Record(ctx, mCalls.M(1), mKeyLength.M(keyLength), mValueLength.M(valueLength), mLatencyMs.M(sinceInMs(startTime)))
-	span.End()
+	lts.recordMeasurements(ctx, mKeyLength.M(keyLength), mValueLength.M(valueLength))
+	lts.end(ctx, err)
 
 	return err
 }
@@ -762,11 +668,7 @@ func (c *Client) cas(ctx context.Context, rw *bufio.ReadWriter, item *Item) erro
 }
 
 func (c *Client) populateOne(ctx context.Context, rw *bufio.ReadWriter, verb string, item *Item) error {
-	ctx, span := trace.StartSpan(ctx, "memcache.(*Client).populateOne")
-	defer span.End()
-
 	if !legalKey(item.Key) {
-		stats.Record(ctx, mIllegalKeys.M(1))
 		return ErrMalformedKey
 	}
 	var err error
@@ -780,19 +682,15 @@ func (c *Client) populateOne(ctx context.Context, rw *bufio.ReadWriter, verb str
 	if err != nil {
 		return err
 	}
-	span.Annotate([]trace.Attribute{}, "Writing item.Value")
 	if _, err = rw.Write(item.Value); err != nil {
 		return err
 	}
-	span.Annotate([]trace.Attribute{}, "Writing CRLF")
 	if _, err := rw.Write(crlf); err != nil {
 		return err
 	}
-	span.Annotate([]trace.Attribute{}, "Flushing")
 	if err := rw.Flush(); err != nil {
 		return err
 	}
-	span.Annotate([]trace.Attribute{}, "Reading a line until we hit a newline")
 	line, err := rw.ReadSlice('\n')
 	if err != nil {
 		return err
@@ -801,17 +699,12 @@ func (c *Client) populateOne(ctx context.Context, rw *bufio.ReadWriter, verb str
 	case bytes.Equal(line, resultStored):
 		return nil
 	case bytes.Equal(line, resultNotStored):
-		stats.Record(ctx, mUnstoredResults.M(1))
 		return ErrNotStored
 	case bytes.Equal(line, resultExists):
-		stats.Record(ctx, mCASConflicts.M(1))
 		return ErrCASConflict
 	case bytes.Equal(line, resultNotFound):
-		stats.Record(ctx, mCacheMisses.M(1))
 		return ErrCacheMiss
 	default:
-		stats.Record(ctx, mErrors.M(1))
-		span.SetStatus(trace.Status{Code: trace.StatusCodeInternal, Message: "Unexpected response"})
 		return fmt.Errorf("memcache: unexpected response line from %q: %q", verb, string(line))
 	}
 }
@@ -851,47 +744,27 @@ func writeExpectf(rw *bufio.ReadWriter, expect []byte, format string, args ...in
 // Delete deletes the item with the provided key. The error ErrCacheMiss is
 // returned if the item didn't already exist in the cache.
 func (c *Client) Delete(ctx context.Context, key string) error {
-	startTime := time.Now()
-	ctx, _ = tag.New(ctx, tag.Upsert(keyMethod, "delete"))
-	ctx, span := trace.StartSpan(ctx, "memcache.(*Client).Delete")
+	ctx, lts := newLatencyTrackingSpan(ctx, "gomemcache.Client.Delete")
 
 	err := c.withKeyRw(ctx, key, func(rw *bufio.ReadWriter) error {
 		return writeExpectf(rw, resultDeleted, "delete %s\r\n", key)
 	})
 
-	msl := []stats.Measurement{mCalls.M(1), mKeyLength.M(int64(len(key)))}
-	if err != nil {
-		ctx, _ = tag.New(ctx, tag.Upsert(keyReason, err.Error()))
-		msl = append(msl, mErrors.M(1))
-		span.SetStatus(trace.Status{Code: trace.StatusCodeUnknown, Message: err.Error()})
-	}
-	msl = append(msl, mLatencyMs.M(sinceInMs(startTime)))
-	stats.Record(ctx, msl...)
-	span.End()
+	lts.recordMeasurements(ctx, mKeyLength.M(int64(len(key))))
+	lts.end(ctx, err)
 
 	return err
 }
 
 // DeleteAll deletes all items in the cache.
 func (c *Client) DeleteAll(ctx context.Context) error {
-	startTime := time.Now()
-	ctx, _ = tag.New(ctx, tag.Upsert(keyMethod, "delete_all"))
-	ctx, span := trace.StartSpan(ctx, "memcache.(*Client).DeleteAll")
+	ctx, lts := newLatencyTrackingSpan(ctx, "gomemcache.Client.DeleteAll")
 
 	err := c.withKeyRw(ctx, "", func(rw *bufio.ReadWriter) error {
 		return writeExpectf(rw, resultDeleted, "flush_all\r\n")
 	})
 
-	msl := []stats.Measurement{mCalls.M(1)}
-	if err != nil {
-		ctx, _ = tag.New(ctx, tag.Upsert(keyReason, err.Error()))
-		msl = append(msl, mErrors.M(1))
-		span.SetStatus(trace.Status{Code: trace.StatusCodeUnknown, Message: err.Error()})
-	}
-	msl = append(msl, mLatencyMs.M(sinceInMs(startTime)))
-	stats.Record(ctx, msl...)
-	span.End()
-
+	lts.end(ctx, err)
 	return err
 }
 
@@ -901,20 +774,11 @@ func (c *Client) DeleteAll(ctx context.Context) error {
 // memcached must be an decimal number, or an error will be returned.
 // On 64-bit overflow, the new value wraps around.
 func (c *Client) Increment(ctx context.Context, key string, delta uint64) (newValue uint64, err error) {
-	startTime := time.Now()
-	ctx, _ = tag.New(ctx, tag.Upsert(keyMethod, "incr"))
-	ctx, span := trace.StartSpan(ctx, "memcache.(*Client).Increment")
+	ctx, lts := newLatencyTrackingSpan(ctx, "gomemcache.Client.Increment")
 	newValue, err = c.incrDecr(ctx, "incr", key, delta)
 
-	msl := []stats.Measurement{mCalls.M(1), mKeyLength.M(int64(len(key))), mDelta.M(int64(delta))}
-	if err != nil {
-		ctx, _ = tag.New(ctx, tag.Upsert(keyReason, err.Error()))
-		msl = append(msl, mErrors.M(1))
-		span.SetStatus(trace.Status{Code: trace.StatusCodeUnknown, Message: err.Error()})
-	}
-	msl = append(msl, mLatencyMs.M(sinceInMs(startTime)))
-	stats.Record(ctx, msl...)
-	span.End()
+	lts.recordMeasurements(ctx, mKeyLength.M(int64(len(key))))
+	lts.end(ctx, err)
 
 	return
 }
@@ -926,60 +790,33 @@ func (c *Client) Increment(ctx context.Context, key string, delta uint64) (newVa
 // On underflow, the new value is capped at zero and does not wrap
 // around.
 func (c *Client) Decrement(ctx context.Context, key string, delta uint64) (newValue uint64, err error) {
-	startTime := time.Now()
-	ctx, _ = tag.New(ctx, tag.Upsert(keyMethod, "decr"))
-	ctx, span := trace.StartSpan(ctx, "memcache.(*Client).Decrement")
+	ctx, lts := newLatencyTrackingSpan(ctx, "gomemcache.Client.Decrement")
 	newValue, err = c.incrDecr(ctx, "decr", key, delta)
 
-	msl := []stats.Measurement{mCalls.M(1), mKeyLength.M(int64(len(key))), mDelta.M(int64(delta))}
-	if err != nil {
-		ctx, _ = tag.New(ctx, tag.Upsert(keyReason, err.Error()))
-		msl = append(msl, mErrors.M(1))
-		span.SetStatus(trace.Status{Code: trace.StatusCodeUnknown, Message: err.Error()})
-	}
-	msl = append(msl, mLatencyMs.M(sinceInMs(startTime)))
-
-	stats.Record(ctx, msl...)
-	span.End()
+	lts.recordMeasurements(ctx, mKeyLength.M(int64(len(key))))
+	lts.end(ctx, err)
 
 	return
 }
 
 func (c *Client) incrDecr(ctx context.Context, verb, key string, delta uint64) (uint64, error) {
-	ctx, span := trace.StartSpan(ctx, "memcache.(*Client).incrDecr")
-	defer span.End()
-
 	var val uint64
 	err := c.withKeyRw(ctx, key, func(rw *bufio.ReadWriter) error {
-		ctx, span := trace.StartSpan(ctx, "memcache.(*Client).withKey")
-		defer span.End()
-
-		span.Annotate([]trace.Attribute{
-			trace.StringAttribute("verb", verb),
-			// Stringifying uint64 instead of making it int64 to avoid any precision losses.
-			trace.StringAttribute("delta", fmt.Sprintf("%d", delta)),
-		}, "writeReadLine being invoked")
 		line, err := writeReadLine(rw, "%s %s %d\r\n", verb, key, delta)
 		if err != nil {
-			span.SetStatus(trace.Status{Code: trace.StatusCodeUnknown, Message: err.Error()})
 			return err
 		}
 		switch {
 		case bytes.Equal(line, resultNotFound):
-			span.SetStatus(trace.Status{Code: trace.StatusCodeNotFound, Message: ErrCacheMiss.Error()})
-			stats.Record(ctx, mCacheMisses.M(1))
 			return ErrCacheMiss
 		case bytes.HasPrefix(line, resultClientErrorPrefix):
 			errMsg := string(line[len(resultClientErrorPrefix) : len(line)-2])
-			span.SetStatus(trace.Status{Code: trace.StatusCodeUnknown, Message: errMsg})
 			return errors.New("memcache: client error: " + errMsg)
 		}
 		val, err = strconv.ParseUint(string(line[:len(line)-2]), 10, 64)
 		if err != nil {
-			span.SetStatus(trace.Status{Code: trace.StatusCodeUnknown, Message: err.Error()})
 			return err
 		}
-		stats.Record(ctx, mCacheHits.M(1))
 		return nil
 	})
 	return val, err

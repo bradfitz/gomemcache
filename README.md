@@ -55,6 +55,15 @@ After this command *gomemcache* is ready to use. Its source will be in:
          ...
     }
 
+## Metrics collected
+
+Metric|Metric Prefix|Unit|Tags
+---|---|---|---
+Latencies of the various methods|"gomemcache/latency"|"ms"|"method", "status", "error"
+The various method calls|"gomemcache/calls"|"1"|"method", "status", "error"
+Key Lengths|"gomemcache/key_length"|"By"|"method"
+Value Lengths|"gomemcache/value_length"|"By"|"method"
+
 ## Full docs, see:
 
 See https://godoc.org/github.com/orijtech/gomemcache/memcache
