@@ -36,22 +36,30 @@ type latencyTrackingSpan struct {
 	span       *trace.Span
 }
 
-func newLatencyTrackingSpan(ctx context.Context, methodName string) (context.Context, *latencyTrackingSpan) {
+func newLatencyTrackingSpan(ctx context.Context, methodName string, keys ...string) (context.Context, *latencyTrackingSpan) {
 	lts := new(latencyTrackingSpan)
-	ctx = lts.start(ctx, methodName)
+	ctx = lts.start(ctx, methodName, keys...)
 	return ctx, lts
 }
 
-func (lts *latencyTrackingSpan) start(ctx context.Context, methodName string) context.Context {
+func (lts *latencyTrackingSpan) start(ctx context.Context, methodName string, keys ...string) context.Context {
 	lts.startTime = time.Now()
 	lts.methodName = methodName
 	ctx, _ = tag.New(ctx, tag.Upsert(keyMethod, lts.methodName))
+
+	var measurements []stats.Measurement
+	for _, key := range keys {
+		measurements = append(measurements, mKeyLength.M(int64(len(key))))
+	}
+	if len(measurements) > 0 {
+		stats.Record(ctx, measurements...)
+	}
 	ctx, lts.span = trace.StartSpan(ctx, methodName)
 
 	return ctx
 }
 
-func (lts *latencyTrackingSpan) end(ctx context.Context, err error) {
+func (lts *latencyTrackingSpan) end(ctx context.Context, err error, valueLengths ...int64) {
 	ctx, _ = tag.New(ctx, tag.Upsert(keyMethod, lts.methodName))
 
 	if err == nil {
@@ -62,8 +70,14 @@ func (lts *latencyTrackingSpan) end(ctx context.Context, err error) {
 		lts.span.SetStatus(trace.Status{Code: errToStatusCode(err), Message: msg})
 	}
 
+	var measurements []stats.Measurement
+	for _, valueLength := range valueLengths {
+		measurements = append(measurements, mValueLength.M(valueLength))
+	}
 	latencyMs := float64(time.Since(lts.startTime).Nanoseconds()) / 1e6
-	stats.Record(ctx, mLatencyMs.M(latencyMs))
+	measurements = append(measurements, mLatencyMs.M(latencyMs))
+
+	stats.Record(ctx, measurements...)
 	lts.span.End()
 }
 
@@ -106,7 +120,7 @@ func errToStatusCode(err error) int32 {
 var (
 	// Measures
 	mKeyLength   = stats.Int64("key_length", "Measures the length of keys", "By")
-	mValueLength = stats.Int64("key_length", "Measures the length of values", "By")
+	mValueLength = stats.Int64("value_length", "Measures the length of values", "By")
 	mLatencyMs   = stats.Float64("latency", "Measures the latency of the various methods", "ms")
 
 	// Views

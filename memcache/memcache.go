@@ -30,8 +30,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"go.opencensus.io/stats"
 )
 
 // Similar to:
@@ -333,16 +331,18 @@ func (c *Client) FlushAll(ctx context.Context) error {
 // Get gets the item for the given key. ErrCacheMiss is returned for a
 // memcache cache miss. The key must be at most 250 bytes in length.
 func (c *Client) Get(ctx context.Context, key string) (item *Item, err error) {
-	ctx, lts := newLatencyTrackingSpan(ctx, "gomemcache.Client.Get")
+	ctx, lts := newLatencyTrackingSpan(ctx, "gomemcache.Client.Get", key)
 
 	err = c.withKeyAddr(ctx, key, func(addr net.Addr) error {
 		return c.getFromAddr(ctx, addr, []string{key}, func(it *Item) { item = it })
 	})
+
 	if err == nil && item == nil {
 		err = ErrCacheMiss
 	}
 
-	lts.end(ctx, err)
+	_, valueLength := keyAndValueLengths(item)
+	lts.end(ctx, err, valueLength)
 	return
 }
 
@@ -352,7 +352,7 @@ func (c *Client) Get(ctx context.Context, key string) (item *Item, err error) {
 // no expiration time. ErrCacheMiss is returned if the key is not in the cache.
 // The key must be at most 250 bytes in length.
 func (c *Client) Touch(ctx context.Context, key string, seconds int32) error {
-	ctx, lts := newLatencyTrackingSpan(ctx, "gomemcache.Client.Touch")
+	ctx, lts := newLatencyTrackingSpan(ctx, "gomemcache.Client.Touch", key)
 	err := c.withKeyAddr(ctx, key, func(addr net.Addr) error {
 		return c.touchFromAddr(ctx, addr, []string{key}, seconds)
 	})
@@ -455,11 +455,10 @@ func (c *Client) touchFromAddr(ctx context.Context, addr net.Addr, keys []string
 // cache misses. Each key must be at most 250 bytes in length.
 // If no error is returned, the returned map will also be non-nil.
 func (c *Client) GetMulti(ctx context.Context, keys []string) (m map[string]*Item, err error) {
-	ctx, lts := newLatencyTrackingSpan(ctx, "gomemcache.Client.GetMulti")
-	var measurements []stats.Measurement
+	ctx, lts := newLatencyTrackingSpan(ctx, "gomemcache.Client.GetMulti", keys...)
+	var valueLengths []int64
 	defer func() {
-		lts.recordMeasurements(ctx, measurements...)
-		lts.end(ctx, err)
+		lts.end(ctx, err, valueLengths...)
 	}()
 
 	var lk sync.Mutex
@@ -468,15 +467,10 @@ func (c *Client) GetMulti(ctx context.Context, keys []string) (m map[string]*Ite
 		if it != nil {
 			lk.Lock()
 			m[it.Key] = it
-			// Survery of the length of values
-			measurements = append(measurements, mValueLength.M(int64(len(it.Value))))
 			lk.Unlock()
-		}
-	}
 
-	// Survey of the length of keys
-	for _, key := range keys {
-		measurements = append(measurements, mKeyLength.M(int64(len(key))))
+			valueLengths = append(valueLengths, int64(len(it.Value)))
+		}
 	}
 
 	keyMap := make(map[net.Addr][]string)
@@ -559,18 +553,9 @@ func scanGetResponseLine(line []byte, it *Item) (size int, err error) {
 func (c *Client) Set(ctx context.Context, item *Item) error {
 	ctx, lts := newLatencyTrackingSpan(ctx, "gomemcache.Client.Set")
 
-	keyLength := int64(0)
-	valueLength := int64(0)
-	if item != nil {
-		if item.Key != "" {
-			keyLength = int64(len(item.Key))
-		}
-		if len(item.Value) != 0 {
-			valueLength = int64(len(item.Value))
-		}
-	}
-
 	err := c.onItem(ctx, item, (*Client).set)
+
+	keyLength, valueLength := keyAndValueLengths(item)
 	lts.recordMeasurements(ctx, mKeyLength.M(keyLength), mValueLength.M(valueLength))
 	lts.end(ctx, err)
 
@@ -581,23 +566,21 @@ func (c *Client) set(ctx context.Context, rw *bufio.ReadWriter, item *Item) erro
 	return c.populateOne(ctx, rw, "set", item)
 }
 
+func keyAndValueLengths(it *Item) (int64, int64) {
+	if it == nil {
+		return 0, 0
+	}
+	return int64(len(it.Key)), int64(len(it.Value))
+}
+
 // Add writes the given item, if no value already exists for its
 // key. ErrNotStored is returned if that condition is not met.
 func (c *Client) Add(ctx context.Context, item *Item) error {
 	ctx, lts := newLatencyTrackingSpan(ctx, "gomemcache.Client.Add")
 
-	keyLength := int64(0)
-	valueLength := int64(0)
-	if item != nil {
-		if item.Key != "" {
-			keyLength = int64(len(item.Key))
-		}
-		if len(item.Value) != 0 {
-			valueLength = int64(len(item.Value))
-		}
-	}
-
 	err := c.onItem(ctx, item, (*Client).add)
+
+	keyLength, valueLength := keyAndValueLengths(item)
 	lts.recordMeasurements(ctx, mKeyLength.M(keyLength), mValueLength.M(valueLength))
 	lts.end(ctx, err)
 
@@ -613,18 +596,9 @@ func (c *Client) add(ctx context.Context, rw *bufio.ReadWriter, item *Item) erro
 func (c *Client) Replace(ctx context.Context, item *Item) error {
 	ctx, lts := newLatencyTrackingSpan(ctx, "gomemcache.Client.Replace")
 
-	keyLength := int64(0)
-	valueLength := int64(0)
-	if item != nil {
-		if item.Key != "" {
-			keyLength = int64(len(item.Key))
-		}
-		if len(item.Value) != 0 {
-			valueLength = int64(len(item.Value))
-		}
-	}
-
 	err := c.onItem(ctx, item, (*Client).replace)
+
+	keyLength, valueLength := keyAndValueLengths(item)
 	lts.recordMeasurements(ctx, mKeyLength.M(keyLength), mValueLength.M(valueLength))
 	lts.end(ctx, err)
 
@@ -645,18 +619,9 @@ func (c *Client) replace(ctx context.Context, rw *bufio.ReadWriter, item *Item) 
 func (c *Client) CompareAndSwap(ctx context.Context, item *Item) error {
 	ctx, lts := newLatencyTrackingSpan(ctx, "gomemcache.Client.CompareAndSwap")
 
-	keyLength := int64(0)
-	valueLength := int64(0)
-	if item != nil {
-		if item.Key != "" {
-			keyLength = int64(len(item.Key))
-		}
-		if len(item.Value) != 0 {
-			valueLength = int64(len(item.Value))
-		}
-	}
-
 	err := c.onItem(ctx, item, (*Client).cas)
+
+	keyLength, valueLength := keyAndValueLengths(item)
 	lts.recordMeasurements(ctx, mKeyLength.M(keyLength), mValueLength.M(valueLength))
 	lts.end(ctx, err)
 
@@ -744,13 +709,11 @@ func writeExpectf(rw *bufio.ReadWriter, expect []byte, format string, args ...in
 // Delete deletes the item with the provided key. The error ErrCacheMiss is
 // returned if the item didn't already exist in the cache.
 func (c *Client) Delete(ctx context.Context, key string) error {
-	ctx, lts := newLatencyTrackingSpan(ctx, "gomemcache.Client.Delete")
+	ctx, lts := newLatencyTrackingSpan(ctx, "gomemcache.Client.Delete", key)
 
 	err := c.withKeyRw(ctx, key, func(rw *bufio.ReadWriter) error {
 		return writeExpectf(rw, resultDeleted, "delete %s\r\n", key)
 	})
-
-	lts.recordMeasurements(ctx, mKeyLength.M(int64(len(key))))
 	lts.end(ctx, err)
 
 	return err
@@ -774,10 +737,8 @@ func (c *Client) DeleteAll(ctx context.Context) error {
 // memcached must be an decimal number, or an error will be returned.
 // On 64-bit overflow, the new value wraps around.
 func (c *Client) Increment(ctx context.Context, key string, delta uint64) (newValue uint64, err error) {
-	ctx, lts := newLatencyTrackingSpan(ctx, "gomemcache.Client.Increment")
+	ctx, lts := newLatencyTrackingSpan(ctx, "gomemcache.Client.Increment", key)
 	newValue, err = c.incrDecr(ctx, "incr", key, delta)
-
-	lts.recordMeasurements(ctx, mKeyLength.M(int64(len(key))))
 	lts.end(ctx, err)
 
 	return
@@ -790,12 +751,9 @@ func (c *Client) Increment(ctx context.Context, key string, delta uint64) (newVa
 // On underflow, the new value is capped at zero and does not wrap
 // around.
 func (c *Client) Decrement(ctx context.Context, key string, delta uint64) (newValue uint64, err error) {
-	ctx, lts := newLatencyTrackingSpan(ctx, "gomemcache.Client.Decrement")
+	ctx, lts := newLatencyTrackingSpan(ctx, "gomemcache.Client.Decrement", key)
 	newValue, err = c.incrDecr(ctx, "decr", key, delta)
-
-	lts.recordMeasurements(ctx, mKeyLength.M(int64(len(key))))
 	lts.end(ctx, err)
-
 	return
 }
 
