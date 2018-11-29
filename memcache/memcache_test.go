@@ -209,6 +209,9 @@ func testWithClient(t *testing.T, c *Client) {
 		t.Errorf("post-DeleteAll want ErrCacheMiss, got %v", err)
 	}
 
+	// Test Ping
+	err = c.Ping()
+	checkErr(err, "error ping: %s", err)
 }
 
 func testTouchWithClient(t *testing.T, c *Client) {
