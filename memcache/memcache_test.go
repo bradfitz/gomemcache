@@ -106,6 +106,20 @@ func testWithClient(t *testing.T, c *Client) {
 	if it.Flags != 123 {
 		t.Errorf("get(foo) Flags = %v, want 123", it.Flags)
 	}
+	// Disable Gets
+	c.GetsSupport = false
+	it, err = c.Get("foo")
+	checkErr(err, "get(foo): %v", err)
+	if it.Key != "foo" {
+		t.Errorf("get(foo) Key = %q, want foo", it.Key)
+	}
+	if string(it.Value) != "fooval" {
+		t.Errorf("get(foo) Value = %q, want fooval", string(it.Value))
+	}
+	if it.Flags != 123 {
+		t.Errorf("get(foo) Flags = %v, want 123", it.Flags)
+	}
+	c.GetsSupport = true
 
 	// Get and set a unicode key
 	quxKey := "Hello_世界"
@@ -167,6 +181,27 @@ func testWithClient(t *testing.T, c *Client) {
 	if g, e := string(m["bar"].Value), "barval"; g != e {
 		t.Errorf("GetMulti: bar: got %q, want %q", g, e)
 	}
+
+	// Disable Gets
+	c.GetsSupport = false
+	m, err = c.GetMulti([]string{"foo", "bar"})
+	checkErr(err, "GetMulti: %v", err)
+	if g, e := len(m), 2; g != e {
+		t.Errorf("GetMulti: got len(map) = %d, want = %d", g, e)
+	}
+	if _, ok := m["foo"]; !ok {
+		t.Fatalf("GetMulti: didn't get key 'foo'")
+	}
+	if _, ok := m["bar"]; !ok {
+		t.Fatalf("GetMulti: didn't get key 'bar'")
+	}
+	if g, e := string(m["foo"].Value), "fooval"; g != e {
+		t.Errorf("GetMulti: foo: got %q, want %q", g, e)
+	}
+	if g, e := string(m["bar"].Value), "barval"; g != e {
+		t.Errorf("GetMulti: bar: got %q, want %q", g, e)
+	}
+	c.GetsSupport = true
 
 	// Delete
 	err = c.Delete("foo")
