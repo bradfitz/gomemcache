@@ -3,13 +3,17 @@ package ketama
 
 import (
 	"bufio"
+	"crypto/md5"
 	"errors"
+	"fmt"
+	"log"
 	"os"
+	"sort"
 	"strings"
 	"time"
 )
 
-type point struct {
+type MCS struct {
 	point int
 	ip    string
 }
@@ -20,7 +24,7 @@ type serverInfo struct {
 
 type Continuum struct {
 	numPoints int
-	points    []*point
+	servers   []*MCS
 	modTime   time.Time
 }
 
@@ -40,7 +44,32 @@ func (c *Continuum) Roll(filename string) error {
 
 }
 
-func (c *Continuum) Create(key string, filename string) {}
+// Generates the continuum of servers (each server as many points on a circle).
+func (c *Continuum) Create(key string, filename string) error {
+	var cont = 0
+	if slist, numServers, err := c.readServerDefinitions(filename); err != nil {
+		return err
+	}
+	if numServers < 1 {
+		return errors.New("no valid server definitions in file", filename)
+	}
+	log.Printf("Server definitions read: %d servers\n", numServers)
+	for i, server := range slist {
+		md5 := c.md5Digest(server)
+		for h := 0; h < 4; h++ {
+			point := md5[3+h*4]<<24 | md5[3+h*4]<<16 | md5[3+h*4]<<8 | md5[3+h*4]
+			fmt.Println(test)
+			c.servers = append(c.servers, &MCS{
+				point: point,
+				ip:    server,
+			})
+			cont++
+		}
+	}
+	sort.Slice(c.servers[:], func(i, j int) bool {
+		return c.servers[i].point < c.servers[j].point
+	})
+}
 
 func (c *Continuum) readServerDefinitions(filename string) ([]*serverInfo, *int, error) {
 	var (
@@ -95,4 +124,9 @@ func (c *Continuum) Print() {}
 
 func (c *Continuum) Compare(pointA *point, pointB *point) {}
 
-func (c *Continuum) Hashi(inString string) {}
+func (c *Continuum) md5Digest(inString string) string {
+	m := md5.New([]byte(inString))
+	return fmt.Sprintf("%x", m.Sum(in))
+}
+
+func (c *Continuum) Hashi(inString string) string {}
