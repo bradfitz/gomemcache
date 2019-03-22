@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package memcache
+package default
 
 import (
 	"hash/crc32"
@@ -23,20 +23,8 @@ import (
 	"sync"
 )
 
-// ServerSelector is the interface that selects a memcache server
-// as a function of the item's key.
-//
-// All ServerSelector implementations must be safe for concurrent use
-// by multiple goroutines.
-type ServerSelector interface {
-	// PickServer returns the server address that a given item
-	// should be shared onto.
-	PickServer(key string) (net.Addr, error)
-	Each(func(net.Addr) error) error
-}
-
 // ServerList is a simple ServerSelector. Its zero value is usable.
-type ServerList struct {
+type Default struct {
 	mu    sync.RWMutex
 	addrs []net.Addr
 }

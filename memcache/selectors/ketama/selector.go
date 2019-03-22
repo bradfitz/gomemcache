@@ -14,26 +14,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package memcache
+package ketama
 
 import (
+	"fmt"
 	"hash/crc32"
 	"net"
 	"strings"
 	"sync"
 )
-
-// ServerSelector is the interface that selects a memcache server
-// as a function of the item's key.
-//
-// All ServerSelector implementations must be safe for concurrent use
-// by multiple goroutines.
-type ServerSelector interface {
-	// PickServer returns the server address that a given item
-	// should be shared onto.
-	PickServer(key string) (net.Addr, error)
-	Each(func(net.Addr) error) error
-}
 
 // ServerList is a simple ServerSelector. Its zero value is usable.
 type ServerList struct {
@@ -115,7 +104,7 @@ func (ss *ServerList) PickServer(key string) (net.Addr, error) {
 	ss.mu.RLock()
 	defer ss.mu.RUnlock()
 	if len(ss.addrs) == 0 {
-		return nil, ErrNoServers
+		return nil, fmt.Errorf("No servers found.")
 	}
 	if len(ss.addrs) == 1 {
 		return ss.addrs[0], nil

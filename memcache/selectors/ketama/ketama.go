@@ -20,11 +20,12 @@ type MCS struct {
 
 type serverInfo struct {
 	address string
+	memory  int
 }
 
 type Continuum struct {
 	numPoints int
-	servers   []*MCS
+	servers   []MCS
 	modTime   time.Time
 }
 
@@ -35,61 +36,120 @@ func New() *Continuum {
 }
 
 func (c *Continuum) Roll(filename string) error {
-	if modtime, err := c.fileModTime(filename); err != nil {
+	var (
+		modtime time.Time
+		err     error
+	)
+	if modtime, err = c.fileModTime(filename); err != nil {
 		return err
 	}
 	if !modtime.IsZero() {
-		c.readerServerDefinitions(filename)
+		c.readServerDefinitions(filename)
 	}
-
+	return nil
 }
 
 // Generates the continuum of servers (each server as many points on a circle).
-func (c *Continuum) Create(key string, filename string) error {
-	var cont = 0
-	if slist, numServers, err := c.readServerDefinitions(filename); err != nil {
+func (c *Continuum) CreateFromFile(key string, filename string) error {
+	var (
+		cont       = 0
+		slist      []*serverInfo
+		numServers int
+		err        error
+	)
+	if slist, numServers, err = c.readServerDefinitions(filename); err != nil {
 		return err
 	}
 	if numServers < 1 {
-		return errors.New("no valid server definitions in file", filename)
+		return fmt.Errorf("no valid server definitions in file ", filename)
 	}
 	log.Printf("Server definitions read: %d servers\n", numServers)
-	for i, server := range slist {
-		md5 := c.md5Digest(server)
-		for h := 0; h < 4; h++ {
-			point := md5[3+h*4]<<24 | md5[3+h*4]<<16 | md5[3+h*4]<<8 | md5[3+h*4]
-			fmt.Println(test)
-			c.servers = append(c.servers, &MCS{
-				point: point,
-				ip:    server,
-			})
-			cont++
+	c.servers = make([]MCS, 0, numServers*160)
+	memory := 0
+	for _, b := range slist {
+		memory += b.memory
+	}
+	for _, server := range slist {
+		pct := float32(server.memory) / float32(memory)
+		ks := int(float32(float64(pct) * 40.0 * float64(numServers)))
+		for k := 0; k < ks; k++ {
+			/* 40 hashes, 4 numbers per hash = 160 points per bucket */
+			md5 := c.md5Digest(server.address)
+			for h := 0; h < 4; h++ {
+				point := md5[3+h*4]<<24 | md5[3+h*4]<<16 | md5[3+h*4]<<8 | md5[3+h*4]
+				c.servers = append(c.servers, MCS{
+					point: int(point),
+					ip:    server.address,
+				})
+				cont++
+			}
 		}
 	}
 	sort.Slice(c.servers[:], func(i, j int) bool {
 		return c.servers[i].point < c.servers[j].point
 	})
+	c.numPoints = cont
+	c.modTime, _ = c.fileModTime(filename)
+	return nil
 }
 
-func (c *Continuum) readServerDefinitions(filename string) ([]*serverInfo, *int, error) {
+// Generates the continuum of servers (each server as many points on a circle).
+func (c *Continuum) Create(key string, slist []serverInfo) error {
+	var (
+		cont = 0
+	)
+	numServers := len(slist)
+	if numServers < 1 {
+		return errors.New("no valid server definitions in given")
+	}
+	log.Printf("Server definitions read: %d servers\n", numServers)
+	c.servers = make([]MCS, 0, numServers*160)
+	memory := 0
+	for _, b := range slist {
+		memory += b.memory
+	}
+	for _, server := range slist {
+		pct := float32(server.memory) / float32(memory)
+		ks := int(float32(float64(pct) * 40.0 * float64(numServers)))
+		for k := 0; k < ks; k++ {
+			/* 40 hashes, 4 numbers per hash = 160 points per bucket */
+			md5 := c.md5Digest(server.address)
+			for h := 0; h < 4; h++ {
+				point := md5[3+h*4]<<24 | md5[3+h*4]<<16 | md5[3+h*4]<<8 | md5[3+h*4]
+				c.servers = append(c.servers, MCS{
+					point: int(point),
+					ip:    server.address,
+				})
+				cont++
+			}
+		}
+	}
+	sort.Slice(c.servers[:], func(i, j int) bool {
+		return c.servers[i].point < c.servers[j].point
+	})
+	c.numPoints = cont
+	return nil
+}
+
+func (c *Continuum) readServerDefinitions(filename string) ([]*serverInfo, int, error) {
 	var (
 		lineno     int
 		numServers int
-		line       string
 		servers    []*serverInfo
+		serverInfo *serverInfo
 	)
 	if file, err := os.Open(filename); err == nil {
 		scanner := bufio.NewScanner(file)
 		for scanner.Scan() {
 			lineno++
-			if serverInfo, err := c.readServerLine(scanner.Text()); err != nil {
-				return nil, numServers, errors.New("error reading server line: ", err)
+			if serverInfo, err = c.readServerLine(scanner.Text()); err != nil {
+				return nil, numServers, fmt.Errorf("error reading server line", err)
 			}
 			numServers++
 			servers = append(servers, serverInfo)
 		}
 	} else {
-		return nil, numServers, errors.New("file does not exist: ", filename)
+		return nil, numServers, fmt.Errorf("file does not exist: ", filename)
 	}
 
 	return servers, numServers, nil
@@ -97,12 +157,11 @@ func (c *Continuum) readServerDefinitions(filename string) ([]*serverInfo, *int,
 
 func (c *Continuum) readServerLine(line string) (*serverInfo, error) {
 	var (
-		delim      = "\t"
-		serverInfo server
+		delim = "\t"
 	)
 
 	splitLine := strings.Split(line, delim)
-	if splitLine == "" {
+	if splitLine[0] == "" {
 		return nil, errors.New("server line could not be read.")
 	}
 	return &serverInfo{
@@ -110,9 +169,13 @@ func (c *Continuum) readServerLine(line string) (*serverInfo, error) {
 	}, nil
 }
 
-func (c *Continuum) fileModTime(filename) (*time.Time, error) {
-	if fileInfo, err := os.Stat(filename); err != nil {
-		return nil, errors.New("modtime could not be retrieved:", err)
+func (c *Continuum) fileModTime(filename string) (time.Time, error) {
+	var (
+		fileInfo os.FileInfo
+		err      error
+	)
+	if fileInfo, err = os.Stat(filename); err != nil {
+		return time.Time{}, fmt.Errorf("modtime could not be retrieved", err)
 	}
 	return fileInfo.ModTime(), nil
 
@@ -122,11 +185,13 @@ func (c *Continuum) GetServer(key string) {}
 
 func (c *Continuum) Print() {}
 
-func (c *Continuum) Compare(pointA *point, pointB *point) {}
+func (c *Continuum) Compare(pointA *MCS, pointB *MCS) {}
 
 func (c *Continuum) md5Digest(inString string) string {
-	m := md5.New([]byte(inString))
-	return fmt.Sprintf("%x", m.Sum(in))
+	return fmt.Sprintf("%x", md5.Sum([]byte(inString)))
 }
 
-func (c *Continuum) Hashi(inString string) string {}
+func (c *Continuum) Hashi(inString string) int {
+	md5 := c.md5Digest(inString)
+	return int(md5[3]<<24 | md5[2]<<16 | md5[1]<<8 | md5[0])
+}
