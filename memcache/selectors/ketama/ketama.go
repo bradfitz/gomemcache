@@ -20,7 +20,7 @@ type MCS struct {
 
 type serverInfo struct {
 	address string
-	memory  int
+	weight  int
 }
 
 type Continuum struct {
@@ -50,51 +50,16 @@ func (c *Continuum) Roll(filename string) error {
 }
 
 // Generates the continuum of servers (each server as many points on a circle).
-func (c *Continuum) CreateFromFile(key string, filename string) error {
-	var (
-		cont       = 0
-		slist      []*serverInfo
-		numServers int
-		err        error
-	)
-	if slist, numServers, err = c.readServerDefinitions(filename); err != nil {
+func (c *Continuum) CreateFromFile(filename string) error {
+	slist, _, err := c.readServerDefinitions(filename)
+	if err != nil {
 		return err
 	}
-	if numServers < 1 {
-		return fmt.Errorf("no valid server definitions in file ", filename)
-	}
-	log.Printf("Server definitions read: %d servers\n", numServers)
-	c.servers = make([]MCS, 0, numServers*160)
-	memory := 0
-	for _, b := range slist {
-		memory += b.memory
-	}
-	for _, server := range slist {
-		pct := float32(server.memory) / float32(memory)
-		ks := int(float32(float64(pct) * 40.0 * float64(numServers)))
-		for k := 0; k < ks; k++ {
-			/* 40 hashes, 4 numbers per hash = 160 points per bucket */
-			md5 := c.md5Digest(server.address)
-			for h := 0; h < 4; h++ {
-				point := md5[3+h*4]<<24 | md5[3+h*4]<<16 | md5[3+h*4]<<8 | md5[3+h*4]
-				c.servers = append(c.servers, MCS{
-					point: int(point),
-					ip:    server.address,
-				})
-				cont++
-			}
-		}
-	}
-	sort.Slice(c.servers[:], func(i, j int) bool {
-		return c.servers[i].point < c.servers[j].point
-	})
-	c.numPoints = cont
-	c.modTime, _ = c.fileModTime(filename)
-	return nil
+	return c.Create(slist)
 }
 
 // Generates the continuum of servers (each server as many points on a circle).
-func (c *Continuum) Create(key string, slist []serverInfo) error {
+func (c *Continuum) Create(slist []*serverInfo) error {
 	var (
 		cont = 0
 	)
@@ -104,12 +69,15 @@ func (c *Continuum) Create(key string, slist []serverInfo) error {
 	}
 	log.Printf("Server definitions read: %d servers\n", numServers)
 	c.servers = make([]MCS, 0, numServers*160)
-	memory := 0
-	for _, b := range slist {
-		memory += b.memory
+	totalWeight := 0
+	for _, server := range slist {
+		if server.weight == 0 {
+			server.weight = 1
+		}
+		totalWeight += server.weight
 	}
 	for _, server := range slist {
-		pct := float32(server.memory) / float32(memory)
+		pct := float32(server.weight) / float32(totalWeight)
 		ks := int(float32(float64(pct) * 40.0 * float64(numServers)))
 		for k := 0; k < ks; k++ {
 			/* 40 hashes, 4 numbers per hash = 160 points per bucket */
@@ -143,13 +111,13 @@ func (c *Continuum) readServerDefinitions(filename string) ([]*serverInfo, int, 
 		for scanner.Scan() {
 			lineno++
 			if serverInfo, err = c.readServerLine(scanner.Text()); err != nil {
-				return nil, numServers, fmt.Errorf("error reading server line", err)
+				return nil, numServers, fmt.Errorf("error reading server line: %s", err)
 			}
 			numServers++
 			servers = append(servers, serverInfo)
 		}
 	} else {
-		return nil, numServers, fmt.Errorf("file does not exist: ", filename)
+		return nil, numServers, fmt.Errorf("file does not exist: %s", filename)
 	}
 
 	return servers, numServers, nil
@@ -175,13 +143,51 @@ func (c *Continuum) fileModTime(filename string) (time.Time, error) {
 		err      error
 	)
 	if fileInfo, err = os.Stat(filename); err != nil {
-		return time.Time{}, fmt.Errorf("modtime could not be retrieved", err)
+		return time.Time{}, fmt.Errorf("modtime could not be retrieved: %s", err)
 	}
 	return fileInfo.ModTime(), nil
 
 }
 
-func (c *Continuum) GetServer(key string) {}
+func (c *Continuum) GetServer(key string) MCS {
+	var (
+		lowp    = 0
+		midp    int
+		midval  int
+		midval1 int
+	)
+	h := c.Hashi(key)
+	highp := c.numPoints
+	for range c.servers {
+		midp = (lowp + highp) / 2
+
+		if midp == c.numPoints {
+			return c.servers[0]
+		}
+
+		midval = c.servers[midp].point
+		if midp == 0 {
+			midval1 = 0
+		} else {
+			midval1 = c.servers[midp-1].point
+		}
+
+		if h <= midval && h > midval1 {
+			return c.servers[midp]
+		}
+
+		if midval < h {
+			lowp = midp + 1
+		} else {
+			lowp = midp - 1
+		}
+
+		if lowp > highp {
+			return c.servers[0]
+		}
+	}
+	return MCS{}
+}
 
 func (c *Continuum) Print() {}
 
