@@ -26,13 +26,18 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
 
 const testServer = "localhost:11211"
 
-func setup(t *testing.T) bool {
+type skippable interface {
+	Skipf(format string, args ...interface{})
+}
+
+func setup(t skippable) bool {
 	c, err := net.Dial("tcp", testServer)
 	if err != nil {
 		t.Skipf("skipping test; no server running at %s", testServer)
@@ -286,4 +291,52 @@ func BenchmarkOnItem(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		c.onItem(&item, dummyFn)
 	}
+}
+
+func BenchmarkSetGet(b *testing.B) {
+	if !setup(b) {
+		return
+	}
+	// Don't call flush_all
+	c := New(testServer)
+
+	checkErr := func(err error, format string, args ...interface{}) {
+		if err != nil {
+			b.Fatalf(format, args...)
+		}
+	}
+
+	benchmarkWorkerCount := 4
+	N := b.N
+	wg := sync.WaitGroup{}
+	wg.Add(benchmarkWorkerCount)
+	for j := 0; j < benchmarkWorkerCount; j++ {
+		j := j
+		go func() {
+			defer wg.Done()
+			expectedKey := fmt.Sprintf("foo%d", j+100)
+			for i := 0; i < N; i++ {
+				expectedValue := fmt.Sprintf("foo%d", i+10000000)
+
+				// Set
+				foo := &Item{Key: expectedKey, Value: []byte(expectedValue), Flags: 123}
+				err := c.Set(foo)
+				checkErr(err, "first set(%s): %v", expectedKey, err)
+
+				// Get
+				it, err := c.Get(expectedKey)
+				checkErr(err, "get(%s): %v", expectedKey, err)
+				if it.Key != expectedKey {
+					b.Errorf("get(%s) Key = %q, want %s", expectedKey, it.Key, expectedKey)
+				}
+				if string(it.Value) != expectedValue {
+					b.Errorf("get(%s) Value = %q, want %s", expectedKey, string(it.Value), expectedValue)
+				}
+				if it.Flags != 123 {
+					b.Errorf("get(foo) Flags = %v, want 123", it.Flags)
+				}
+			}
+		}()
+	}
+	wg.Wait()
 }
