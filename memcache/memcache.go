@@ -29,6 +29,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // Similar to:
@@ -125,7 +127,34 @@ func New(server ...string) *Client {
 
 // NewFromSelector returns a new Client using the provided ServerSelector.
 func NewFromSelector(ss ServerSelector) *Client {
-	return &Client{selector: ss}
+	c := &Client{
+		selector: ss,
+	}
+	c.currConns = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Subsystem:   "memcache_client",
+			Name:        "connections",
+			Help:        "Number of current connections to memcached.",
+			ConstLabels: prometheus.Labels{"client": fmt.Sprintf("%p", c)},
+		},
+	)
+	c.totalConns = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Subsystem:   "memcache_client",
+			Name:        "connections_total",
+			Help:        "Total number of connections to memcached.",
+			ConstLabels: prometheus.Labels{"client": fmt.Sprintf("%p", c)},
+		},
+	)
+	c.totalConnErrs = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Subsystem:   "memcache_client",
+			Name:        "connection_errors_total",
+			Help:        "Total number of errors on connections to memcached.",
+			ConstLabels: prometheus.Labels{"client": fmt.Sprintf("%p", c)},
+		},
+	)
+	return c
 }
 
 // Client is a memcache client.
@@ -147,6 +176,10 @@ type Client struct {
 
 	lk       sync.Mutex
 	freeconn map[string][]*conn
+
+	currConns     prometheus.Gauge
+	totalConns    prometheus.Counter
+	totalConnErrs prometheus.Counter
 }
 
 // Item is an item to be got or stored in a memcached server.
@@ -195,6 +228,8 @@ func (cn *conn) condRelease(err *error) {
 	if *err == nil || resumableError(*err) {
 		cn.release()
 	} else {
+		cn.c.currConns.Dec()
+		cn.c.totalConnErrs.Inc()
 		cn.nc.Close()
 	}
 }
@@ -207,6 +242,7 @@ func (c *Client) putFreeConn(addr net.Addr, cn *conn) {
 	}
 	freelist := c.freeconn[addr.String()]
 	if len(freelist) >= c.maxIdleConns() {
+		cn.c.currConns.Dec()
 		cn.nc.Close()
 		return
 	}
@@ -259,6 +295,7 @@ func (c *Client) dial(addr net.Addr) (net.Conn, error) {
 		err error
 	}
 
+	c.totalConns.Inc()
 	nc, err := net.DialTimeout(addr.Network(), addr.String(), c.netTimeout())
 	if err == nil {
 		return nc, nil
@@ -279,8 +316,10 @@ func (c *Client) getConn(addr net.Addr) (*conn, error) {
 	}
 	nc, err := c.dial(addr)
 	if err != nil {
+		c.totalConnErrs.Inc()
 		return nil, err
 	}
+	c.currConns.Inc()
 	cn = &conn{
 		nc:   nc,
 		addr: addr,
@@ -684,4 +723,16 @@ func (c *Client) incrDecr(verb, key string, delta uint64) (uint64, error) {
 		return nil
 	})
 	return val, err
+}
+
+func (c *Client) Describe(ch chan<- *prometheus.Desc) {
+	c.currConns.Describe(ch)
+	c.totalConns.Describe(ch)
+	c.totalConnErrs.Describe(ch)
+}
+
+func (c *Client) Collect(ch chan<- prometheus.Metric) {
+	c.currConns.Collect(ch)
+	c.totalConns.Collect(ch)
+	c.totalConnErrs.Collect(ch)
 }
