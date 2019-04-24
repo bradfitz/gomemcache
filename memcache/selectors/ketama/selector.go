@@ -14,31 +14,20 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package memcache
+package ketama
 
 import (
-	"hash/crc32"
+	"fmt"
 	"net"
 	"strings"
 	"sync"
 )
 
-// ServerSelector is the interface that selects a memcache server
-// as a function of the item's key.
-//
-// All ServerSelector implementations must be safe for concurrent use
-// by multiple goroutines.
-type ServerSelector interface {
-	// PickServer returns the server address that a given item
-	// should be shared onto.
-	PickServer(key string) (net.Addr, error)
-	Each(func(net.Addr) error) error
-}
-
 // ServerList is a simple ServerSelector. Its zero value is usable.
 type ServerList struct {
-	mu    sync.RWMutex
-	addrs []net.Addr
+	mu        sync.RWMutex
+	addrs     []net.Addr
+	continuum *Continuum
 }
 
 // staticAddr caches the Network() and String() values from any net.Addr.
@@ -67,6 +56,7 @@ func (s *staticAddr) String() string  { return s.str }
 // is returned, no changes are made to the ServerList.
 func (ss *ServerList) SetServers(servers ...string) error {
 	naddr := make([]net.Addr, len(servers))
+	contAddrs := make([]*serverInfo, len(servers))
 	for i, server := range servers {
 		if strings.Contains(server, "/") {
 			addr, err := net.ResolveUnixAddr("unix", server)
@@ -74,18 +64,28 @@ func (ss *ServerList) SetServers(servers ...string) error {
 				return err
 			}
 			naddr[i] = newStaticAddr(addr)
+			contAddrs[i] = &serverInfo{
+				address: server,
+			}
 		} else {
 			tcpaddr, err := net.ResolveTCPAddr("tcp", server)
 			if err != nil {
 				return err
 			}
 			naddr[i] = newStaticAddr(tcpaddr)
+			contAddrs[i] = &serverInfo{
+				address: server,
+			}
 		}
 	}
 
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
 	ss.addrs = naddr
+
+	cont := New()
+	cont.Create(contAddrs)
+	ss.continuum = cont
 	return nil
 }
 
@@ -101,29 +101,15 @@ func (ss *ServerList) Each(f func(net.Addr) error) error {
 	return nil
 }
 
-// keyBufPool returns []byte buffers for use by PickServer's call to
-// crc32.ChecksumIEEE to avoid allocations. (but doesn't avoid the
-// copies, which at least are bounded in size and small)
-var keyBufPool = sync.Pool{
-	New: func() interface{} {
-		b := make([]byte, 256)
-		return &b
-	},
-}
-
 func (ss *ServerList) PickServer(key string) (net.Addr, error) {
 	ss.mu.RLock()
 	defer ss.mu.RUnlock()
-	if len(ss.addrs) == 0 {
-		return nil, ErrNoServers
+	mcs := ss.continuum.GetServer(key)
+	for _, address := range ss.addrs {
+		if address.String() == mcs.ip {
+			fmt.Printf("Address selected: %+v", address)
+			return address, nil
+		}
 	}
-	if len(ss.addrs) == 1 {
-		return ss.addrs[0], nil
-	}
-	bufp := keyBufPool.Get().(*[]byte)
-	n := copy(*bufp, key)
-	cs := crc32.ChecksumIEEE((*bufp)[:n])
-	keyBufPool.Put(bufp)
-
-	return ss.addrs[cs%uint32(len(ss.addrs))], nil
+	return nil, fmt.Errorf("No servers found.")
 }

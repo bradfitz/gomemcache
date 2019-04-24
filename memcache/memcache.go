@@ -29,6 +29,10 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/michaeldistler/gomemcache/memcache/selectors"
+	"github.com/michaeldistler/gomemcache/memcache/selectors/defaultselector"
+	"github.com/michaeldistler/gomemcache/memcache/selectors/ketama"
 )
 
 // Similar to:
@@ -117,14 +121,19 @@ var (
 // New returns a memcache client using the provided server(s)
 // with equal weight. If a server is listed multiple times,
 // it gets a proportional amount of weight.
-func New(server ...string) *Client {
-	ss := new(ServerList)
+func New(algorithm string, server ...string) *Client {
+	var ss selectors.ServerSelector
+	if algorithm == "ketama" {
+		ss = new(ketama.ServerList)
+	} else {
+		ss = new(defaultselector.ServerList)
+	}
 	ss.SetServers(server...)
 	return NewFromSelector(ss)
 }
 
 // NewFromSelector returns a new Client using the provided ServerSelector.
-func NewFromSelector(ss ServerSelector) *Client {
+func NewFromSelector(ss selectors.ServerSelector) *Client {
 	return &Client{selector: ss}
 }
 
@@ -143,7 +152,7 @@ type Client struct {
 	// be set to a number higher than your peak parallel requests.
 	MaxIdleConns int
 
-	selector ServerSelector
+	selector selectors.ServerSelector
 
 	lk       sync.Mutex
 	freeconn map[string][]*conn
