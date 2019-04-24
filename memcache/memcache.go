@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/michaeldistler/gomemcache/memcache/selectors"
+	"github.com/michaeldistler/gomemcache/memcache/selectors/defaultselector"
 	"github.com/michaeldistler/gomemcache/memcache/selectors/ketama"
 )
 
@@ -120,8 +121,13 @@ var (
 // New returns a memcache client using the provided server(s)
 // with equal weight. If a server is listed multiple times,
 // it gets a proportional amount of weight.
-func New(server ...string) *Client {
-	ss := new(ketama.ServerList)
+func New(algorithm string, server ...string) *Client {
+	var ss selectors.ServerSelector
+	if algorithm == "ketama" {
+		ss = new(ketama.ServerList)
+	} else {
+		ss = new(defaultselector.ServerList)
+	}
 	ss.SetServers(server...)
 	return NewFromSelector(ss)
 }

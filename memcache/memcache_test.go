@@ -43,6 +43,7 @@ func setup(t *testing.T) bool {
 }
 
 func TestLocalhost(t *testing.T) {
+	fmt.Println("MEMCACHE")
 	if !setup(t) {
 		return
 	}
@@ -107,6 +108,7 @@ func testWithClient(t *testing.T, c *Client) {
 		t.Errorf("get(foo) Flags = %v, want 123", it.Flags)
 	}
 
+	fmt.Println("SETTING SHIT")
 	// Get and set a unicode key
 	quxKey := "Hello_世界"
 	qux := &Item{Key: quxKey, Value: []byte("hello world")}

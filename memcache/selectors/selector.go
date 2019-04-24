@@ -26,6 +26,7 @@ import (
 // All ServerSelector implementations must be safe for concurrent use
 // by multiple goroutines.
 type ServerSelector interface {
+	SetServers(servers ...string) error
 	// PickServer returns the server address that a given item
 	// should be shared onto.
 	PickServer(key string) (net.Addr, error)

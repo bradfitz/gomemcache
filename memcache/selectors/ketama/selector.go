@@ -107,6 +107,7 @@ func (ss *ServerList) PickServer(key string) (net.Addr, error) {
 	mcs := ss.continuum.GetServer(key)
 	for _, address := range ss.addrs {
 		if address.String() == mcs.ip {
+			fmt.Printf("Address selected: %+v", address)
 			return address, nil
 		}
 	}
