@@ -43,7 +43,6 @@ func setup(t *testing.T) bool {
 }
 
 func TestLocalhost(t *testing.T) {
-	fmt.Println("MEMCACHE")
 	if !setup(t) {
 		return
 	}
