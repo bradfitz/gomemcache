@@ -48,7 +48,7 @@ var (
 	// CompareAndSwap) failed because the condition was not satisfied.
 	ErrNotStored = errors.New("memcache: item not stored")
 
-	// ErrServer means that a server error occurred.
+	// ErrServerError means that a server error occurred.
 	ErrServerError = errors.New("memcache: server error")
 
 	// ErrNoStats means that no statistics were available.
@@ -61,6 +61,10 @@ var (
 
 	// ErrNoServers is returned when no servers are configured or available.
 	ErrNoServers = errors.New("memcache: no servers configured or available")
+
+	// ErrDumpDisable is returned when the "stats cachedump" and
+	// "lru_crawler metadump" commands are disabled.
+	ErrDumpDisable = errors.New("memcache: cachedump/metadump disabled")
 )
 
 const (
@@ -307,6 +311,10 @@ func (c *Client) onItem(item *Item, fn func(*Client, *bufio.ReadWriter, *Item) e
 	return nil
 }
 
+//FlushAll Invalidates all existing cache items.
+//
+//This command does not pause the server, as it returns immediately.
+//It does not free up or flush memory at all, it just causes all items to expire.
 func (c *Client) FlushAll() error {
 	return c.selector.Each(c.flushAllFromAddr)
 }
