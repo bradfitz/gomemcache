@@ -669,7 +669,8 @@ func (c *Client) DeleteAll() error {
 	})
 }
 
-// Ping checks if instances are alive.
+// Ping checks all instances if they are alive. Returns error if any
+// of them is down.
 func (c *Client) Ping() error {
 	return c.selector.Each(c.ping)
 }
