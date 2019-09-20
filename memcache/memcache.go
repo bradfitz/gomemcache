@@ -148,6 +148,8 @@ type Client struct {
 
 	lk       sync.Mutex
 	freeconn map[string][]*conn
+
+        OnConnect func(*conn) (error)
 }
 
 // Item is an item to be got or stored in a memcached server.
@@ -289,7 +291,23 @@ func (c *Client) getConn(addr net.Addr) (*conn, error) {
 		c:    c,
 	}
 	cn.extendDeadline()
+        if c.OnConnect != nil {
+                err := c.OnConnect(cn)
+                if err != nil {
+                        return nil, err
+                }
+        }
 	return cn, nil
+}
+
+func (c *Client) SetAuthentication(username string, password []byte) {
+        authItem := Item{Key: username, Value: password}
+        c.OnConnect = func(cn *conn) (error) {
+                if err := c.set(cn.rw, &authItem); err != nil {
+		       return err
+                }
+                return nil
+        }
 }
 
 func (c *Client) onItem(item *Item, fn func(*Client, *bufio.ReadWriter, *Item) error) error {
