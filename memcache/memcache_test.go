@@ -244,6 +244,7 @@ func testWithClient(t *testing.T, c *Client) {
 		t.Errorf("post-DeleteAll want ErrCacheMiss, got %v", err)
 	}
 
+
 	//Sleep to allow the memcache server to refresh
 	time.Sleep(time.Second * 5)
 	if stats, err := c.StatsItemsServers(0); err != nil {
@@ -261,6 +262,10 @@ func testWithClient(t *testing.T, c *Client) {
 			}
 		}
 	}
+  
+	// Test Ping
+	err = c.Ping()
+	checkErr(err, "error ping: %s", err)
 }
 
 func testTouchWithClient(t *testing.T, c *Client) {
