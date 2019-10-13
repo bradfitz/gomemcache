@@ -201,6 +201,41 @@ func testWithClient(t *testing.T, c *Client) {
 	}
 	testTouchWithClient(t, c)
 
+	// Test stats
+	if stats, err := c.StatsServers(); err != nil {
+		t.Errorf("Stats error: %v", err)
+	} else {
+		for addr, s := range stats {
+			if s.Errs != nil {
+				t.Errorf("Stats server %s errors: %v", addr.String(), s.Errs)
+			} else if s.ServerErr != nil {
+				t.Errorf("Stats server error: %s %v", addr.String(), s.ServerErr)
+
+			}
+		}
+	}
+	// Test stats item
+	if stats, err := c.StatsItemsServers(0); err != nil {
+		t.Errorf("Stats error: %v", err)
+	} else {
+		for addr, s := range stats {
+			if s.ServerErr != nil {
+				t.Errorf("Stats server %s error: %v", addr.String(), s.ServerErr)
+			}
+		}
+	}
+
+	// Test stats item
+	if stats, err := c.StatsSlabsServers(); err != nil {
+		t.Errorf("Stats error: %v", err)
+	} else {
+		for addr, s := range stats {
+			if s.ServerErr != nil {
+				t.Errorf("Stats server %s error: %v", addr.String(), s.ServerErr)
+			}
+		}
+	}
+
 	// Test Delete All
 	err = c.DeleteAll()
 	checkErr(err, "DeleteAll: %v", err)
@@ -209,6 +244,25 @@ func testWithClient(t *testing.T, c *Client) {
 		t.Errorf("post-DeleteAll want ErrCacheMiss, got %v", err)
 	}
 
+
+	//Sleep to allow the memcache server to refresh
+	time.Sleep(time.Second * 5)
+	if stats, err := c.StatsItemsServers(0); err != nil {
+		t.Errorf("Stats error: %v", err)
+	} else {
+		for addr, stats := range stats {
+			if len(stats.StatsItemsSlabs) != 0 {
+				keys := []string{}
+				for _, itemsStats := range stats.StatsItemsSlabs {
+					for _, k := range itemsStats.Keys {
+						keys = append(keys, k.Key)
+					}
+				}
+				t.Errorf("post-DeleteAll stats items in server %s has %d item(s), key(s): %v", addr.String(), len(stats.StatsItemsSlabs), keys)
+			}
+		}
+	}
+  
 	// Test Ping
 	err = c.Ping()
 	checkErr(err, "error ping: %s", err)
