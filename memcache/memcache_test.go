@@ -107,6 +107,36 @@ func testWithClient(t *testing.T, c *Client) {
 		t.Errorf("get(foo) Flags = %v, want 123", it.Flags)
 	}
 
+	// Gets and cas
+	bob := &Item{Key:"bob", Value: []byte("bobval")}
+	c.Set(bob)
+	its, err := c.Gets("bob")
+	checkErr(err, "gets(bob): %v", err)
+	if its.Key != "bob" {
+		t.Errorf("gets(bob) Key = %q, want bob", its.Key)
+	}
+	if string(its.Value) != "bobval" {
+		t.Errorf("gets(bob) Value = %q, want fooval", string(its.Value))
+	}
+	newBob := &Item{Key: "bob", Value: []byte("newbobval"), casid: its.casid}
+	err = c.CompareAndSwap(newBob)
+	checkErr(err, "cas(bob): %v", err)
+
+	its, err = c.Gets("bob")
+	checkErr(err, "gets(bob): %v", err)
+	if its.Key != "bob" {
+		t.Errorf("gets(bob) Key = %q, want bob", its.Key)
+	}
+	if string(its.Value) != "newbobval" {
+		t.Errorf("gets(bob) Value = %q, want newbobval", string(its.Value))
+	}
+	anotherC := New(testServer)
+	err = anotherC.Set(&Item{Key: "bob", Value: []byte("notbobval"), Flags: 123})
+	checkErr(err, "another client set(bob): %v", err)
+	if err = c.CompareAndSwap(newBob); err == nil {
+		t.Fatalf("cas(bob): should fail", )
+	}
+
 	// Get and set a unicode key
 	quxKey := "Hello_世界"
 	qux := &Item{Key: quxKey, Value: []byte("hello world")}

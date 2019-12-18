@@ -116,9 +116,6 @@ var (
 
 	resultClientErrorPrefix = []byte("CLIENT_ERROR ")
 	versionPrefix           = []byte("VERSION")
-
-	serverTypeMemcache    = "mc"
-	serverTypeMemcacheQ   = "mcq"
 )
 
 // New returns a memcache client using the provided server(s)
@@ -132,7 +129,7 @@ func New(server ...string) *Client {
 
 // NewFromSelector returns a new Client using the provided ServerSelector.
 func NewFromSelector(ss ServerSelector) *Client {
-	return &Client{selector: ss, serverType: serverTypeMemcache}
+	return &Client{selector: ss}
 }
 
 // Client is a memcache client.
@@ -154,9 +151,6 @@ type Client struct {
 
 	lk       sync.Mutex
 	freeconn map[string][]*conn
-
-	// mc for memcached and mcq for memcacheq
-	serverType string
 }
 
 // Item is an item to be got or stored in a memcached server.
@@ -207,15 +201,6 @@ func (cn *conn) condRelease(err *error) {
 	} else {
 		cn.nc.Close()
 	}
-}
-
-func (c *Client) SetServerType(aServerType string) error {
-	if aServerType != serverTypeMemcache && aServerType != serverTypeMemcacheQ {
-		return ErrInvalidServerType
-	}
-
-	c.serverType = aServerType
-	return nil
 }
 
 func (c *Client) putFreeConn(addr net.Addr, cn *conn) {
@@ -332,6 +317,19 @@ func (c *Client) FlushAll() error {
 
 // Get gets the item for the given key. ErrCacheMiss is returned for a
 // memcache cache miss. The key must be at most 250 bytes in length.
+// Cas support
+func (c *Client) Gets(key string) (item *Item, err error) {
+	err = c.withKeyAddr(key, func(addr net.Addr) error {
+		return c.getsFromAddr(addr, []string{key}, func(it *Item) { item = it })
+	})
+	if err == nil && item == nil {
+		err = ErrCacheMiss
+	}
+	return
+}
+
+// Get gets the item for the given key. ErrCacheMiss is returned for a
+// memcache cache miss. The key must be at most 250 bytes in length.
 func (c *Client) Get(key string) (item *Item, err error) {
 	err = c.withKeyAddr(key, func(addr net.Addr) error {
 		return c.getFromAddr(addr, []string{key}, func(it *Item) { item = it })
@@ -379,17 +377,24 @@ func (c *Client) withKeyRw(key string, fn func(*bufio.ReadWriter) error) error {
 	})
 }
 
-func (c *Client) getFromAddr(addr net.Addr, keys []string, cb func(*Item)) error {
-	serverType := c.serverType
-	var getCmd string
-	if serverType == serverTypeMemcache {
-		getCmd = "gets"
-	}
-	if serverType == serverTypeMemcacheQ {
-		getCmd = "get"
-	}
+func (c *Client) getsFromAddr(addr net.Addr, keys []string, cb func(*Item)) error {
 	return c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
-		if _, err := fmt.Fprintf(rw, "%s %s\r\n", getCmd, strings.Join(keys, " ")); err != nil {
+		if _, err := fmt.Fprintf(rw, "gets %s\r\n", strings.Join(keys, " ")); err != nil {
+			return err
+		}
+		if err := rw.Flush(); err != nil {
+			return err
+		}
+		if err := parseGetResponse(rw.Reader, cb); err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
+func (c *Client) getFromAddr(addr net.Addr, keys []string, cb func(*Item)) error {
+	return c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
+		if _, err := fmt.Fprintf(rw, "get %s\r\n", strings.Join(keys, " ")); err != nil {
 			return err
 		}
 		if err := rw.Flush(); err != nil {
@@ -504,6 +509,48 @@ func (c *Client) GetMulti(keys []string) (map[string]*Item, error) {
 	for addr, keys := range keyMap {
 		go func(addr net.Addr, keys []string) {
 			ch <- c.getFromAddr(addr, keys, addItemToMap)
+		}(addr, keys)
+	}
+
+	var err error
+	for _ = range keyMap {
+		if ge := <-ch; ge != nil {
+			err = ge
+		}
+	}
+	return m, err
+}
+
+// GetMulti is a batch version of Get. The returned map from keys to
+// items may have fewer elements than the input slice, due to memcache
+// cache misses. Each key must be at most 250 bytes in length.
+// If no error is returned, the returned map will also be non-nil.
+// Cas support.
+func (c *Client) GetsMulti(keys []string) (map[string]*Item, error) {
+	var lk sync.Mutex
+	m := make(map[string]*Item)
+	addItemToMap := func(it *Item) {
+		lk.Lock()
+		defer lk.Unlock()
+		m[it.Key] = it
+	}
+
+	keyMap := make(map[net.Addr][]string)
+	for _, key := range keys {
+		if !legalKey(key) {
+			return nil, ErrMalformedKey
+		}
+		addr, err := c.selector.PickServer(key)
+		if err != nil {
+			return nil, err
+		}
+		keyMap[addr] = append(keyMap[addr], key)
+	}
+
+	ch := make(chan error, buffered)
+	for addr, keys := range keyMap {
+		go func(addr net.Addr, keys []string) {
+			ch <- c.getsFromAddr(addr, keys, addItemToMap)
 		}(addr, keys)
 	}
 
