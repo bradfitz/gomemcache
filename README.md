@@ -11,7 +11,7 @@ This is a memcache client library for the Go programming language
 
 ### Using *go mod*
 
-    $ go mod edit -require github.com/lovelock/gomemcache/memcache
+    $ go mod edit -require github.com/lovelock/gomemcache/memcache@v1.0.1
 
 ### Using *go get*
 
