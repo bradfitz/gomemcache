@@ -7,6 +7,10 @@ This is a memcache client library for the Go programming language
 
 ### Using *go get*
 
+    $ go mod edit -require github.com/bradfitz/gomemcache/memcache
+    
+### Using *go get*
+
     $ go get github.com/bradfitz/gomemcache/memcache
 
 After this command *gomemcache* is ready to use. Its source will be in:
