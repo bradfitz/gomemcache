@@ -132,7 +132,7 @@ func New(server ...string) *Client {
 
 // NewFromSelector returns a new Client using the provided ServerSelector.
 func NewFromSelector(ss ServerSelector) *Client {
-	return &Client{selector: ss, ServerType: serverTypeMemcache}
+	return &Client{selector: ss, serverType: serverTypeMemcache}
 }
 
 // Client is a memcache client.
@@ -156,7 +156,7 @@ type Client struct {
 	freeconn map[string][]*conn
 
 	// mc for memcached and mcq for memcacheq
-	ServerType string
+	serverType string
 }
 
 // Item is an item to be got or stored in a memcached server.
@@ -214,7 +214,7 @@ func (c *Client) SetServerType(aServerType string) error {
 		return ErrInvalidServerType
 	}
 
-	c.ServerType = aServerType
+	c.serverType = aServerType
 	return nil
 }
 
@@ -380,7 +380,7 @@ func (c *Client) withKeyRw(key string, fn func(*bufio.ReadWriter) error) error {
 }
 
 func (c *Client) getFromAddr(addr net.Addr, keys []string, cb func(*Item)) error {
-	serverType := c.ServerType
+	serverType := c.serverType
 	var getCmd string
 	if serverType == serverTypeMemcache {
 		getCmd = "gets"
