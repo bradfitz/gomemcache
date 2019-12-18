@@ -61,9 +61,6 @@ var (
 
 	// ErrNoServers is returned when no servers are configured or available.
 	ErrNoServers = errors.New("memcache: no servers configured or available")
-
-	// ErrInvalidServerType is returned when invalid server type is set to client.
-	ErrInvalidServerType = errors.New("memcache: invalid server type")
 )
 
 const (
