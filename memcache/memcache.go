@@ -61,6 +61,9 @@ var (
 
 	// ErrNoServers is returned when no servers are configured or available.
 	ErrNoServers = errors.New("memcache: no servers configured or available")
+
+	// ErrInvalidServerType is returned when invalid server type is set to client.
+	ErrInvalidServerType = errors.New("memcache: invalid server type")
 )
 
 const (
@@ -113,6 +116,9 @@ var (
 
 	resultClientErrorPrefix = []byte("CLIENT_ERROR ")
 	versionPrefix           = []byte("VERSION")
+
+	serverTypeMemcache    = "mc"
+	serverTypeMemcacheQ   = "mcq"
 )
 
 // New returns a memcache client using the provided server(s)
@@ -126,7 +132,7 @@ func New(server ...string) *Client {
 
 // NewFromSelector returns a new Client using the provided ServerSelector.
 func NewFromSelector(ss ServerSelector) *Client {
-	return &Client{selector: ss}
+	return &Client{selector: ss, ServerType: serverTypeMemcache}
 }
 
 // Client is a memcache client.
@@ -148,6 +154,9 @@ type Client struct {
 
 	lk       sync.Mutex
 	freeconn map[string][]*conn
+
+	// mc for memcached and mcq for memcacheq
+	ServerType string
 }
 
 // Item is an item to be got or stored in a memcached server.
@@ -198,6 +207,15 @@ func (cn *conn) condRelease(err *error) {
 	} else {
 		cn.nc.Close()
 	}
+}
+
+func (c *Client) SetServerType(aServerType string) error {
+	if aServerType != serverTypeMemcache && aServerType != serverTypeMemcacheQ {
+		return ErrInvalidServerType
+	}
+
+	c.ServerType = aServerType
+	return nil
 }
 
 func (c *Client) putFreeConn(addr net.Addr, cn *conn) {
@@ -362,8 +380,16 @@ func (c *Client) withKeyRw(key string, fn func(*bufio.ReadWriter) error) error {
 }
 
 func (c *Client) getFromAddr(addr net.Addr, keys []string, cb func(*Item)) error {
+	serverType := c.ServerType
+	var getCmd string
+	if serverType == serverTypeMemcache {
+		getCmd = "gets"
+	}
+	if serverType == serverTypeMemcacheQ {
+		getCmd = "get"
+	}
 	return c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
-		if _, err := fmt.Fprintf(rw, "get %s\r\n", strings.Join(keys, " ")); err != nil {
+		if _, err := fmt.Fprintf(rw, "%s %s\r\n", getCmd, strings.Join(keys, " ")); err != nil {
 			return err
 		}
 		if err := rw.Flush(); err != nil {
