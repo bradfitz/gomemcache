@@ -312,7 +312,7 @@ func (c *Client) FlushAll() error {
 	return c.selector.Each(c.flushAllFromAddr)
 }
 
-// Get gets the item for the given key. ErrCacheMiss is returned for a
+// Gets gets the item for the given key. ErrCacheMiss is returned for a
 // memcache cache miss. The key must be at most 250 bytes in length.
 // Cas support
 func (c *Client) Gets(key string) (item *Item, err error) {
@@ -518,7 +518,7 @@ func (c *Client) GetMulti(keys []string) (map[string]*Item, error) {
 	return m, err
 }
 
-// GetMulti is a batch version of Get. The returned map from keys to
+// GetsMulti is a batch version of Get. The returned map from keys to
 // items may have fewer elements than the input slice, due to memcache
 // cache misses. Each key must be at most 250 bytes in length.
 // If no error is returned, the returned map will also be non-nil.
