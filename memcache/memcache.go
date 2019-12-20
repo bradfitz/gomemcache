@@ -126,7 +126,7 @@ func New(server ...string) *Client {
 
 // NewFromSelector returns a new Client using the provided ServerSelector.
 func NewFromSelector(ss ServerSelector) *Client {
-	return &Client{selector: ss}
+	return &Client{selector: ss, DisableCAS: false}
 }
 
 // Client is a memcache client.
@@ -148,6 +148,10 @@ type Client struct {
 
 	lk       sync.Mutex
 	freeconn map[string][]*conn
+
+	// When true, get is sent instead of gets when Client.Get() is called.
+	// Default false.
+	DisableCAS bool
 }
 
 // Item is an item to be got or stored in a memcached server.
@@ -362,8 +366,13 @@ func (c *Client) withKeyRw(key string, fn func(*bufio.ReadWriter) error) error {
 }
 
 func (c *Client) getFromAddr(addr net.Addr, keys []string, cb func(*Item)) error {
+	cmd := "gets"
+	if c.DisableCAS {
+		cmd = "get"
+	}
+
 	return c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
-		if _, err := fmt.Fprintf(rw, "gets %s\r\n", strings.Join(keys, " ")); err != nil {
+		if _, err := fmt.Fprintf(rw, "%s %s\r\n", cmd, strings.Join(keys, " ")); err != nil {
 			return err
 		}
 		if err := rw.Flush(); err != nil {
