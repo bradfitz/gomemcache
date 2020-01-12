@@ -27,6 +27,11 @@ After this command *gomemcache* is ready to use. Its source will be in:
          ...
     }
 
+Sometimes you meet "connect timeout" error because default timeout is 100ms.
+So you need setting like:
+
+    mc.Timeout = 500 * time.Millisecond
+
 ## Full docs, see:
 
 See https://godoc.org/github.com/bradfitz/gomemcache/memcache
