@@ -20,6 +20,7 @@ package memcache
 import (
 	"bufio"
 	"bytes"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -129,6 +130,13 @@ func NewFromSelector(ss ServerSelector) *Client {
 	return &Client{selector: ss}
 }
 
+// NewWithTLS returns a memcache client that uses TLS
+func NewWithTLS(config *tls.Config, server ...string) *Client {
+	cl := New(server...)
+	cl.tls = config
+	return cl
+}
+
 // Client is a memcache client.
 // It is safe for unlocked use by multiple concurrent goroutines.
 type Client struct {
@@ -148,6 +156,7 @@ type Client struct {
 
 	lk       sync.Mutex
 	freeconn map[string][]*conn
+	tls      *tls.Config
 }
 
 // Item is an item to be got or stored in a memcached server.
@@ -177,6 +186,7 @@ type conn struct {
 	rw   *bufio.ReadWriter
 	addr net.Addr
 	c    *Client
+	tc   *tls.Conn
 }
 
 // release returns this connection back to the client's free pool
@@ -185,7 +195,11 @@ func (cn *conn) release() {
 }
 
 func (cn *conn) extendDeadline() {
-	cn.nc.SetDeadline(time.Now().Add(cn.c.netTimeout()))
+	if cn.tc != nil {
+		cn.tc.SetDeadline(time.Now().Add(cn.c.netTimeout()))
+	} else {
+		cn.nc.SetDeadline(time.Now().Add(cn.c.netTimeout()))
+	}
 }
 
 // condRelease releases this connection if the error pointed to by err
@@ -195,6 +209,14 @@ func (cn *conn) extendDeadline() {
 func (cn *conn) condRelease(err *error) {
 	if *err == nil || resumableError(*err) {
 		cn.release()
+	} else {
+		cn.close()
+	}
+}
+
+func (cn *conn) close() {
+	if cn.tc != nil {
+		cn.tc.Close()
 	} else {
 		cn.nc.Close()
 	}
@@ -208,7 +230,7 @@ func (c *Client) putFreeConn(addr net.Addr, cn *conn) {
 	}
 	freelist := c.freeconn[addr.String()]
 	if len(freelist) >= c.maxIdleConns() {
-		cn.nc.Close()
+		cn.close()
 		return
 	}
 	c.freeconn[addr.String()] = append(freelist, cn)
@@ -272,21 +294,34 @@ func (c *Client) dial(addr net.Addr) (net.Conn, error) {
 	return nil, err
 }
 
+func (c *Client) dialTLS(addr net.Addr) (*tls.Conn, error) {
+	return tls.DialWithDialer(&net.Dialer{Timeout: c.netTimeout()}, addr.Network(), addr.String(), c.tls)
+}
+
 func (c *Client) getConn(addr net.Addr) (*conn, error) {
 	cn, ok := c.getFreeConn(addr)
 	if ok {
 		cn.extendDeadline()
 		return cn, nil
 	}
-	nc, err := c.dial(addr)
-	if err != nil {
-		return nil, err
-	}
 	cn = &conn{
-		nc:   nc,
 		addr: addr,
-		rw:   bufio.NewReadWriter(bufio.NewReader(nc), bufio.NewWriter(nc)),
 		c:    c,
+	}
+	if c.tls == nil {
+		nc, err := c.dial(addr)
+		if err != nil {
+			return nil, err
+		}
+		cn.nc = nc
+		cn.rw = bufio.NewReadWriter(bufio.NewReader(nc), bufio.NewWriter(nc))
+	} else {
+		tc, err := c.dialTLS(addr)
+		if err != nil {
+			return nil, err
+		}
+		cn.rw = bufio.NewReadWriter(bufio.NewReader(tc), bufio.NewWriter(tc))
+		cn.tc = tc
 	}
 	cn.extendDeadline()
 	return cn, nil
@@ -482,7 +517,7 @@ func (c *Client) GetMulti(keys []string) (map[string]*Item, error) {
 	}
 
 	var err error
-	for _ = range keyMap {
+	for range keyMap {
 		if ge := <-ch; ge != nil {
 			err = ge
 		}
