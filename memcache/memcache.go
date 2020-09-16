@@ -24,10 +24,10 @@ import (
 	"fmt"
 	"io"
 	"net"
-
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -129,6 +129,14 @@ func NewFromSelector(ss ServerSelector) *Client {
 	return &Client{selector: ss}
 }
 
+// Stats contains statistics about connections being used by a client.
+type Stats struct {
+	// The current number of active connections in use.
+	ActiveConns int
+	// The current number of idle connections in the pool.
+	IdleConns int
+}
+
 // Client is a memcache client.
 // It is safe for unlocked use by multiple concurrent goroutines.
 type Client struct {
@@ -143,6 +151,11 @@ type Client struct {
 	// Consider your expected traffic rates and latency carefully. This should
 	// be set to a number higher than your peak parallel requests.
 	MaxIdleConns int
+
+	// number of currently used connections (must use atomic)
+	activeConns int32
+	// number of currently idle connections (must use atomic)
+	idleConns int32
 
 	selector ServerSelector
 
@@ -193,6 +206,7 @@ func (cn *conn) extendDeadline() {
 // cache miss).  The purpose is to not recycle TCP connections that
 // are bad.
 func (cn *conn) condRelease(err *error) {
+	atomic.AddInt32(&cn.c.activeConns, -1)
 	if *err == nil || resumableError(*err) {
 		cn.release()
 	} else {
@@ -212,6 +226,7 @@ func (c *Client) putFreeConn(addr net.Addr, cn *conn) {
 		return
 	}
 	c.freeconn[addr.String()] = append(freelist, cn)
+	atomic.AddInt32(&c.idleConns, 1)
 }
 
 func (c *Client) getFreeConn(addr net.Addr) (cn *conn, ok bool) {
@@ -226,6 +241,7 @@ func (c *Client) getFreeConn(addr net.Addr) (cn *conn, ok bool) {
 	}
 	cn = freelist[len(freelist)-1]
 	c.freeconn[addr.String()] = freelist[:len(freelist)-1]
+	atomic.AddInt32(&c.idleConns, -1)
 	return cn, true
 }
 
@@ -276,6 +292,7 @@ func (c *Client) getConn(addr net.Addr) (*conn, error) {
 	cn, ok := c.getFreeConn(addr)
 	if ok {
 		cn.extendDeadline()
+		atomic.AddInt32(&c.activeConns, 1)
 		return cn, nil
 	}
 	nc, err := c.dial(addr)
@@ -289,6 +306,7 @@ func (c *Client) getConn(addr net.Addr) (*conn, error) {
 		c:    c,
 	}
 	cn.extendDeadline()
+	atomic.AddInt32(&c.activeConns, 1)
 	return cn, nil
 }
 
@@ -488,6 +506,14 @@ func (c *Client) GetMulti(keys []string) (map[string]*Item, error) {
 		}
 	}
 	return m, err
+}
+
+// Stats returns this client's current statistics.
+func (c *Client) Stats() Stats {
+	return Stats{
+		ActiveConns: int(atomic.LoadInt32(&c.activeConns)),
+		IdleConns:   int(atomic.LoadInt32(&c.idleConns)),
+	}
 }
 
 // parseGetResponse reads a GET response from r and calls cb for each
