@@ -30,27 +30,73 @@ import (
 	"time"
 )
 
-const testServer = "localhost:11211"
+var SupportedCfg = map[string]struct {
+	Touch    bool
+	GetMulti bool
+}{
+	TextProtoType: {
+		Touch: false, GetMulti: true},
+	BinaryProtoType: {
+		Touch: true, GetMulti: false},
+}
+
+const (
+	doLocalhostTextProtoTest = true
+	testTextServer           = "fdev13.mail.cloud.devmail.ru:11211"
+)
+
+const (
+	doLocalhostBinaryProtoTest                         = true
+	testBinaryServer                                   = "172.27.76.29:11211"
+	testBinaryServerUsername, testBinaryServerPassword = "testuser", "123"
+)
+
+const (
+	doUnixSocketTest = false
+)
 
 func setup(t *testing.T) bool {
-	c, err := net.Dial("tcp", testServer)
+	c, err := net.Dial("tcp", testTextServer)
 	if err != nil {
-		t.Skipf("skipping test; no server running at %s", testServer)
+		t.Skipf("skipping test; no server running at %s", testTextServer)
 	}
 	c.Write([]byte("flush_all\r\n"))
 	c.Close()
 	return true
 }
 
-func TestLocalhost(t *testing.T) {
+func TestLocalhostTextProto(t *testing.T) {
+	if !doLocalhostTextProtoTest {
+		t.SkipNow()
+	}
 	if !setup(t) {
 		return
 	}
-	testWithClient(t, New(testServer))
+	testWithClient(t, New(testTextServer))
+}
+
+func TestLocalhostBinaryProto(t *testing.T) {
+	if !doLocalhostBinaryProtoTest {
+		t.SkipNow()
+	}
+
+	c := NewBinary(testBinaryServer)
+	c.Username, c.Password = testBinaryServerUsername, testBinaryServerPassword
+	c.Timeout = time.Second
+	c.AuthTimeout = time.Second
+	err := c.FlushAll()
+	if err != nil {
+		t.Errorf("error flush all: %v", err)
+		return
+	}
+	testWithClient(t, c)
 }
 
 // Run the memcached binary as a child process and connect to its unix socket.
 func TestUnixSocket(t *testing.T) {
+	if !doUnixSocketTest {
+		t.SkipNow()
+	}
 	sock := fmt.Sprintf("/tmp/test-gomemcache-%d.sock", os.Getpid())
 	cmd := exec.Command("memcached", "-s", sock)
 	if err := cmd.Start(); err != nil {
@@ -124,13 +170,17 @@ func testWithClient(t *testing.T, c *Client) {
 	// Set malformed keys
 	malFormed := &Item{Key: "foo bar", Value: []byte("foobarval")}
 	err = c.Set(malFormed)
-	if err != ErrMalformedKey {
+	if c.ProtoType() == TextProtoType && err != ErrMalformedKey {
 		t.Errorf("set(foo bar) should return ErrMalformedKey instead of %v", err)
+	} else if c.ProtoType() == BinaryProtoType && err != nil {
+		t.Errorf("set(foo bar) should return nil instead of %v", err)
 	}
 	malFormed = &Item{Key: "foo" + string(0x7f), Value: []byte("foobarval")}
 	err = c.Set(malFormed)
-	if err != ErrMalformedKey {
+	if c.ProtoType() == TextProtoType && err != ErrMalformedKey {
 		t.Errorf("set(foo<0x7f>) should return ErrMalformedKey instead of %v", err)
+	} else if c.ProtoType() == BinaryProtoType && err != nil {
+		t.Errorf("set(foo<0x7f>) should return nil instead of %v", err)
 	}
 
 	// Add
@@ -146,26 +196,28 @@ func testWithClient(t *testing.T, c *Client) {
 	if err := c.Replace(baz); err != ErrNotStored {
 		t.Fatalf("expected replace(baz) to return ErrNotStored, got %v", err)
 	}
-	err = c.Replace(bar)
-	checkErr(err, "replaced(foo): %v", err)
+	// err = c.Replace(bar)
+	// checkErr(err, "replaced(foo): %v", err)
 
 	// GetMulti
-	m, err := c.GetMulti([]string{"foo", "bar"})
-	checkErr(err, "GetMulti: %v", err)
-	if g, e := len(m), 2; g != e {
-		t.Errorf("GetMulti: got len(map) = %d, want = %d", g, e)
-	}
-	if _, ok := m["foo"]; !ok {
-		t.Fatalf("GetMulti: didn't get key 'foo'")
-	}
-	if _, ok := m["bar"]; !ok {
-		t.Fatalf("GetMulti: didn't get key 'bar'")
-	}
-	if g, e := string(m["foo"].Value), "fooval"; g != e {
-		t.Errorf("GetMulti: foo: got %q, want %q", g, e)
-	}
-	if g, e := string(m["bar"].Value), "barval"; g != e {
-		t.Errorf("GetMulti: bar: got %q, want %q", g, e)
+	if SupportedCfg[c.ProtoType()].GetMulti {
+		m, err := c.GetMulti([]string{"foo", "bar"})
+		checkErr(err, "GetMulti: %v", err)
+		if g, e := len(m), 2; g != e {
+			t.Errorf("GetMulti: got len(map) = %d, want = %d", g, e)
+		}
+		if _, ok := m["foo"]; !ok {
+			t.Fatalf("GetMulti: didn't get key 'foo'")
+		}
+		if _, ok := m["bar"]; !ok {
+			t.Fatalf("GetMulti: didn't get key 'bar'")
+		}
+		if g, e := string(m["foo"].Value), "fooval"; g != e {
+			t.Errorf("GetMulti: foo: got %q, want %q", g, e)
+		}
+		if g, e := string(m["bar"].Value), "barval"; g != e {
+			t.Errorf("GetMulti: bar: got %q, want %q", g, e)
+		}
 	}
 
 	// Delete
@@ -196,10 +248,15 @@ func testWithClient(t *testing.T, c *Client) {
 	}
 	mustSet(&Item{Key: "num", Value: []byte("not-numeric")})
 	n, err = c.Increment("num", 1)
-	if err == nil || !strings.Contains(err.Error(), "client error") {
+	if c.ProtoType() == TextProtoType && (err == nil || !strings.Contains(err.Error(), "client error")) {
 		t.Fatalf("increment non-number: want client error, got %v", err)
+	} else if c.ProtoType() == BinaryProtoType && err != ErrNonNumeric {
+		t.Fatalf("increment non-number: want ErrNonNumeric, got %v", err)
 	}
-	testTouchWithClient(t, c)
+
+	if SupportedCfg[c.ProtoType()].Touch {
+		testTouchWithClient(t, c)
+	}
 
 	// Test Delete All
 	err = c.DeleteAll()
@@ -212,6 +269,34 @@ func testWithClient(t *testing.T, c *Client) {
 	// Test Ping
 	err = c.Ping()
 	checkErr(err, "error ping: %s", err)
+
+	//CompareAndSwap test fail
+	err = c.Set(&Item{Key: "cas_key_fail", Value: []byte("hello world")})
+	checkErr(err, "set (cas_key_fail): %v", err)
+
+	casItem, err := c.Get("cas_key_fail")
+	checkErr(err, "get (cas_key_fail): %v", err)
+
+	err = c.Set(&Item{Key: "cas_key_fail", Value: []byte("hello world 2")})
+	checkErr(err, "second set (cas_key_fail): %v", err)
+
+	casItem.Value = []byte("hello world 3")
+	err = c.CompareAndSwap(casItem)
+	if err != ErrCASConflict {
+		t.Fatalf("compare and swap: want ErrCASConflict, got %v", err)
+	}
+
+	//CompareAndSwap test pass
+	err = c.Set(&Item{Key: "cas_key_pass", Value: []byte("hello world")})
+	checkErr(err, "set (cas_key_pass): %v", err)
+
+	casItem, err = c.Get("cas_key_pass")
+	checkErr(err, "get (cas_key_pass): %v", err)
+
+	casItem.Value = []byte("hello world 3")
+	err = c.CompareAndSwap(casItem)
+	checkErr(err, "compareAndSwap (cas_key_pass): %v", err)
+
 }
 
 func testTouchWithClient(t *testing.T, c *Client) {
