@@ -20,11 +20,11 @@ package memcache
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net"
-
 	"strconv"
 	"strings"
 	"sync"
@@ -101,6 +101,7 @@ func legalKey(key string) bool {
 var (
 	crlf            = []byte("\r\n")
 	space           = []byte(" ")
+	mn              = []byte("mn\r\n")
 	resultOK        = []byte("OK\r\n")
 	resultStored    = []byte("STORED\r\n")
 	resultNotStored = []byte("NOT_STORED\r\n")
@@ -546,6 +547,36 @@ func (c *Client) set(rw *bufio.ReadWriter, item *Item) error {
 	return c.populateOne(rw, "set", item)
 }
 
+func (c *Client) SetMulti(_ context.Context, items []*Item) error {
+	itemsMap := make(map[net.Addr][]*Item)
+	for _, item := range items {
+		if !legalKey(item.Key) {
+			return ErrMalformedKey
+		}
+		addr, err := c.selector.PickServer(item.Key)
+		if err != nil {
+			return err
+		}
+		itemsMap[addr] = append(itemsMap[addr], item)
+	}
+
+	ch := make(chan error, buffered)
+	for addr, items := range itemsMap {
+		go func(addr net.Addr, items []*Item) {
+			ch <- c.setMany(addr, items)
+		}(addr, items)
+	}
+
+	var responseErr error
+	for _ = range itemsMap {
+		if ge := <-ch; ge != nil {
+			responseErr = ge
+		}
+	}
+
+	return responseErr
+}
+
 // Add writes the given item, if no value already exists for its
 // key. ErrNotStored is returned if that condition is not met.
 func (c *Client) Add(item *Item) error {
@@ -620,6 +651,52 @@ func (c *Client) populateOne(rw *bufio.ReadWriter, verb string, item *Item) erro
 		return ErrCacheMiss
 	}
 	return fmt.Errorf("memcache: unexpected response line from %q: %q", verb, string(line))
+}
+
+func (c *Client) setMany(addr net.Addr, items []*Item) error {
+	return c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
+		for _, item := range items {
+			_, err := fmt.Fprintf(rw, "ms %s T%d S%d F%d q\r\n", item.Key, item.Expiration, len(item.Value), item.Flags)
+			if err != nil {
+				return err
+			}
+			_, err = rw.Write(item.Value)
+			if err != nil {
+				return err
+			}
+			_, err = rw.Write(crlf)
+			if err != nil {
+				return err
+			}
+		}
+		_, err := rw.Write(mn)
+		if err != nil {
+			return err
+		}
+		err = rw.Flush()
+		if err != nil {
+			return err
+		}
+
+		return parseMultiSetResponse(rw)
+	})
+}
+
+func parseMultiSetResponse(rw *bufio.ReadWriter) error {
+	for {
+		line, err := rw.ReadSlice('\n')
+		if err != nil {
+			return err
+		}
+		switch {
+		case bytes.Equal(line, resultNotStored):
+			err = ErrNotStored
+		case bytes.Equal(line, []byte("MN\r\n")):
+			return err
+		default:
+			err = fmt.Errorf("unexpected line %s", line)
+		}
+	}
 }
 
 func writeReadLine(rw *bufio.ReadWriter, format string, args ...interface{}) ([]byte, error) {
