@@ -136,6 +136,10 @@ type Client struct {
 	// If zero, DefaultTimeout is used.
 	Timeout time.Duration
 
+	// DialTimeout connects to the address on the named network.  It acts as a pluggable
+	// implementation; if unspecified, net.DialTimeout is used instead.
+	DialTimeout func(network, address string, timeout time.Duration) (net.Conn, error)
+
 	// MaxIdleConns specifies the maximum number of idle connections that will
 	// be maintained per address. If less than one, DefaultMaxIdleConns will be
 	// used.
@@ -260,7 +264,12 @@ func (c *Client) dial(addr net.Addr) (net.Conn, error) {
 		err error
 	}
 
-	nc, err := net.DialTimeout(addr.Network(), addr.String(), c.netTimeout())
+	dial := c.DialTimeout
+	if dial == nil {
+		dial = net.DialTimeout
+	}
+
+	nc, err := dial(addr.Network(), addr.String(), c.netTimeout())
 	if err == nil {
 		return nc, nil
 	}
