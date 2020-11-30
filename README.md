@@ -15,17 +15,25 @@ After this command *gomemcache* is ready to use. Its source will be in:
 
 ## Example
 
-    import (
-            "github.com/bradfitz/gomemcache/memcache"
-    )
+```go
+import (
+    "github.com/bradfitz/gomemcache/memcache"
+)
 
-    func main() {
-         mc := memcache.New("10.0.0.1:11211", "10.0.0.2:11211", "10.0.0.3:11212")
-         mc.Set(&memcache.Item{Key: "foo", Value: []byte("my value")})
+func main() {
+    mc := memcache.New("10.0.0.1:11211", "10.0.0.2:11211", "10.0.0.3:11212")
+    mc.Set(&memcache.Item{Key: "foo", Value: []byte("my value")})
 
-         it, err := mc.Get("foo")
-         ...
-    }
+    it, err := mc.Get("foo")
+
+    // With context
+    ctx, cancel := context.WithTimeout(2 * time.Second)
+    doLongTimeJob(ctx)
+    ...
+    it, err = mc.GetWithContext(ctx, "bar")
+    ...
+}
+```
 
 ## Full docs, see:
 
