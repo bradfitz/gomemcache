@@ -846,8 +846,8 @@ func (c *Client) statsSettingsFromAddr(addr net.Addr, cb func(map[string]string)
 
 		stats := map[string]string{}
 		for err == nil && !bytes.Equal(line, resultEnd) {
-			s := bytes.Split(line, []byte(" "))
-			if len(s) != 3 || !bytes.HasPrefix(s[0], resultStatPrefix) {
+			s := bytes.SplitN(line, []byte(" "), 3)
+			if len(s) != 3 || bytes.Compare(s[0], resultStatPrefix) != 0 {
 				return fmt.Errorf("memcache: unexpected stats line format %q", line)
 			}
 			stats[string(s[1])] = string(bytes.TrimSpace(s[2]))
