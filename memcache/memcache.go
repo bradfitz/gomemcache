@@ -202,16 +202,17 @@ func (cn *conn) condRelease(err *error) {
 
 func (c *Client) putFreeConn(addr net.Addr, cn *conn) {
 	c.lk.Lock()
-	defer c.lk.Unlock()
 	if c.freeconn == nil {
 		c.freeconn = make(map[string][]*conn)
 	}
 	freelist := c.freeconn[addr.String()]
 	if len(freelist) >= c.maxIdleConns() {
+		c.lk.Unlock()
 		cn.nc.Close()
 		return
 	}
 	c.freeconn[addr.String()] = append(freelist, cn)
+	c.lk.Unlock()
 }
 
 func (c *Client) getFreeConn(addr net.Addr) (cn *conn, ok bool) {
