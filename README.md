@@ -29,7 +29,7 @@ After this command *gomemcache* is ready to use. Its source will be in:
 
 ## Full docs, see:
 
-See https://godoc.org/github.com/bradfitz/gomemcache/memcache
+See https://pkg.go.dev/github.com/bradfitz/gomemcache/memcache
 
 Or run:
 
