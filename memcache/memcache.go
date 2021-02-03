@@ -24,7 +24,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-
 	"strconv"
 	"strings"
 	"sync"
@@ -715,4 +714,38 @@ func (c *Client) incrDecr(verb, key string, delta uint64) (uint64, error) {
 		return nil
 	})
 	return val, err
+}
+
+func (c *Client) WarmUpPool() int {
+	var connReleasedWg, wg, connAcquired sync.WaitGroup
+	var connsCreated int
+	defer connReleasedWg.Wait()
+	wg.Add(1)
+
+	for i := 0; i < c.MaxIdleConns; i++ {
+		c.selector.Each(func(addr net.Addr) error {
+			connAcquired.Add(1)
+			go func() {
+				connReleasedWg.Add(1)
+				defer connReleasedWg.Done()
+
+				conn, err := c.getConn(addr)
+				connAcquired.Done()
+				if err != nil {
+					fmt.Println(err)
+					return
+				}
+
+				connsCreated++
+				wg.Wait()
+				conn.release()
+				return
+			}()
+			return nil
+		})
+	}
+
+	connAcquired.Wait()
+	wg.Done()
+	return connsCreated
 }
