@@ -191,13 +191,13 @@ func (cn *conn) extendDeadline() {
 // is nil (not an error) or is only a protocol level error (e.g. a
 // cache miss).  The purpose is to not recycle TCP connections that
 // are bad.
-func (cn *conn) condRelease(err *error, selector ServerSelector) {
+func (cn *conn) condRelease(err *error) {
 	if *err == nil || resumableError(*err) {
-		selector.OnResult(cn.addr, nil)
 		cn.release()
+		cn.c.selector.OnResult(cn.addr, nil)
 	} else {
 		cn.nc.Close()
-		selector.OnResult(cn.addr, *err)
+		cn.c.selector.OnResult(cn.addr, *err)
 	}
 }
 
@@ -258,10 +258,10 @@ func (cte *ConnectTimeoutError) Error() string {
 func (c *Client) dial(addr net.Addr) (net.Conn, error) {
 	nc, err := net.DialTimeout(addr.Network(), addr.String(), c.netTimeout())
 	if err == nil {
+		c.selector.OnResult(addr, err)
 		return nc, nil
 	}
 
-	c.selector.OnResult(addr, err)
 	if ne, ok := err.(net.Error); ok && ne.Timeout() {
 		return nil, &ConnectTimeoutError{addr}
 	}
@@ -298,7 +298,7 @@ func (c *Client) onItem(item *Item, fn func(*Client, *bufio.ReadWriter, *Item) e
 	if err != nil {
 		return err
 	}
-	defer cn.condRelease(&err, c.selector)
+	defer cn.condRelease(&err)
 	if err = fn(c, cn.rw, item); err != nil {
 		return err
 	}
@@ -349,7 +349,7 @@ func (c *Client) withAddrRw(addr net.Addr, fn func(*bufio.ReadWriter) error) (er
 	if err != nil {
 		return err
 	}
-	defer cn.condRelease(&err, c.selector)
+	defer cn.condRelease(&err)
 	return fn(cn.rw)
 }
 

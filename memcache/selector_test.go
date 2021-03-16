@@ -159,14 +159,15 @@ func functionalTest(t *testing.T, ports []string) {
 	wg := sync.WaitGroup{}
 
 	server := func(port string) {
-		time.Sleep(time.Millisecond * time.Duration(rand.Int31n(25)))
 		for i := 0; i < 5; i++ {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second*3)
 			defer cancel()
 			cmd := exec.CommandContext(ctx, "memcached", "-p", port)
 			err := cmd.Run()
 			assertEqualError(t, err, "signal: killed")
-			time.Sleep(time.Millisecond*500 + time.Duration(rand.Int31n(50)))
+
+			// no randomisation - keep approximately in lockstep to keep the amount of downtime high
+			time.Sleep(time.Millisecond*500)
 		}
 		wg.Done()
 	}
@@ -246,6 +247,8 @@ func functionalTest(t *testing.T, ports []string) {
 			unexpectedErrors[errVal] = struct{}{}
 		}
 	}
+
+	t.Log("aggregate result of Set calls", resultCounts)
 
 	// we're up for approximately 2.5 seconds out of every three, so we should have a lot of successes too
 	assertGreaterOrEqual(t, resultCounts["<nil>"], total/10, "expected many successes")
