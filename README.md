@@ -5,15 +5,9 @@ This is a memcache client library for the Go programming language
 
 ### Fork notes
 
-This was forked from the original to add circuit-breaking.
-
-The following changes were made:
-
-- ServerSelector.OnResult added as a hook for the circuit-breaking logic
-- SetServers removed - we didn't use the ability to set the servers
-  at runtime and it complicated the code
-- Depends on errors.As, so new minimum go version is 1.13
-
+This was forked from the original to add circuit-breaking. ServerSelector.OnResult was added as a hook for the circuit-breaking logic,
+and the ServerList learned how to circuit break on network errors. Servers will be removed from circulation and retried
+with expoential backoff.
 
 ## Installing
 
