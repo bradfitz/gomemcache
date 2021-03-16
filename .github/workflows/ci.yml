@@ -20,17 +20,18 @@ jobs:
   test:
     strategy:
       matrix:
-        go-version: [1.12.x, 1.13.x, 1.14.x, 1.15.x]
+        go-version: [1.13.x, 1.14.x, 1.15.x]
         platform: [ubuntu-latest]
     runs-on: ${{ matrix.platform }}
     steps:
     - name: Install Go
-      if: success()
       uses: actions/setup-go@v2
       with:
         go-version: ${{ matrix.go-version }}
     - name: Checkout code
       uses: actions/checkout@v2
+    - name: Install memcache
+      run: apt install memcached
     - name: Run tests
       run: go test -v -race ./...
     - name: Run benchmarks
@@ -40,10 +41,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Install Go
-      if: success()
       uses: actions/setup-go@v2
       with:
         go-version: 1.15.x
+    - name: Install memcache
+      run: apt install memcached
     - name: Checkout code
       uses: actions/checkout@v2
     - name: Calc coverage
