@@ -308,6 +308,7 @@ func (c *Client) onItem(item *Item, fn func(*Client, *bufio.ReadWriter, *Item) e
 	return nil
 }
 
+// FlushAll sends flush command to all servers
 func (c *Client) FlushAll() error {
 	return c.selector.Each(c.flushAllFromAddr)
 }
