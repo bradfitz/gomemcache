@@ -116,12 +116,11 @@ var (
 )
 
 // New returns a memcache client using the provided server(s)
-// with equal weight. If a server is listed multiple times,
-// it gets a proportional amount of weight.
+// with equal weight, and circuit-breaking on network errors.
 func New(server ...string) *Client {
-	ss := new(ServerList)
-	ss.SetServers(server...)
-	return NewFromSelector(ss)
+	// ignore original dial
+	sel, _ := NewSelectorWithBreaker(server)
+	return NewFromSelector(sel)
 }
 
 // NewFromSelector returns a new Client using the provided ServerSelector.
@@ -192,11 +191,13 @@ func (cn *conn) extendDeadline() {
 // is nil (not an error) or is only a protocol level error (e.g. a
 // cache miss).  The purpose is to not recycle TCP connections that
 // are bad.
-func (cn *conn) condRelease(err *error) {
+func (cn *conn) condRelease(err *error, selector ServerSelector) {
 	if *err == nil || resumableError(*err) {
+		selector.OnResult(cn.addr, nil)
 		cn.release()
 	} else {
 		cn.nc.Close()
+		selector.OnResult(cn.addr, *err)
 	}
 }
 
@@ -255,16 +256,12 @@ func (cte *ConnectTimeoutError) Error() string {
 }
 
 func (c *Client) dial(addr net.Addr) (net.Conn, error) {
-	type connError struct {
-		cn  net.Conn
-		err error
-	}
-
 	nc, err := net.DialTimeout(addr.Network(), addr.String(), c.netTimeout())
 	if err == nil {
 		return nc, nil
 	}
 
+	c.selector.OnResult(addr, err)
 	if ne, ok := err.(net.Error); ok && ne.Timeout() {
 		return nil, &ConnectTimeoutError{addr}
 	}
@@ -301,7 +298,7 @@ func (c *Client) onItem(item *Item, fn func(*Client, *bufio.ReadWriter, *Item) e
 	if err != nil {
 		return err
 	}
-	defer cn.condRelease(&err)
+	defer cn.condRelease(&err, c.selector)
 	if err = fn(c, cn.rw, item); err != nil {
 		return err
 	}
@@ -352,7 +349,7 @@ func (c *Client) withAddrRw(addr net.Addr, fn func(*bufio.ReadWriter) error) (er
 	if err != nil {
 		return err
 	}
-	defer cn.condRelease(&err)
+	defer cn.condRelease(&err, c.selector)
 	return fn(cn.rw)
 }
 
