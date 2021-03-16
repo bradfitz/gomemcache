@@ -1,12 +1,11 @@
 on:
   push:
-    branches:
   pull_request:
 
 
 name: run tests
 jobs:
-  lint:
+  vet:
     runs-on: ubuntu-latest
     steps:
     - name: Install Go
@@ -15,10 +14,8 @@ jobs:
         go-version: 1.15.x
     - name: Checkout code
       uses: actions/checkout@v2
-    - name: Run linters
-      uses: golangci/golangci-lint-action@v2
-      with:
-        version: v1.29
+    - name: Run vet
+      run: go vet -c=3 ./...
 
   test:
     strategy:
