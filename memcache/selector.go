@@ -50,11 +50,11 @@ type retryState string
 
 const (
 	// kept unavailable until ready for retry
-	retryWait retryState = "RetryWait"
+	retryWait retryState = "retryWait"
 	// ready to be picked
-	retryReady retryState = "RetryReady"
+	retryReady retryState = "retryReady"
 	// address is having a single operation run against it to see if sever has come back online
-	retryRunning retryState = "RetryRunning"
+	retryRunning retryState = "retryRunning"
 )
 
 type waitState struct {
@@ -276,8 +276,21 @@ func (ss *serversWithBreaker) scheduleRetry(addr net.Addr, wait time.Duration) {
 		// recovered while routine was sleeping
 		return
 	}
+	// Sometimes we'll end up here not in retryWait due to concurrent operations,
+	// and that retries duration is not fixed. e.g
+	//
+	// 1. error and retry (1) scheduled
+	//    1.1. scheduleRetry(A) start waiting
+	// 2. recover
+	// 3. error, and retry (B) scheduled
+	// 4. scheduledRetry(A) wakes up, and sets us in retryReady
+	// 5. scheduledRetry(B) wakes up, and sees we're in retryReady
+	//
+	// We could reverse 4 and 5 if 1) happened after many retries, which
+	// would also mean we could wake up in retryRunning (B wakes up after
+	// short wait, schedules retry, and then address is picked for a retry)
 	if ws.retry != retryWait {
-		panic(fmt.Errorf("retry unexpectedly not in RETRY_WAIT: %s", ws.retry))
+		return
 	}
 	// schedule a retry
 	ws.retry = retryReady
