@@ -34,9 +34,7 @@ jobs:
       run: sudo apt-get install memcached
     - name: Run tests
       run: go test -v -race ./...
-    - name: Run benchmarks 
-      run: go test -bench -v ./...
-      
+
   coverage:
     runs-on: ubuntu-latest
     steps:

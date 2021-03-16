@@ -28,23 +28,29 @@ import (
 	"time"
 )
 
-func BenchmarkPickServerWithBreaker(b *testing.B) {
-	// at least two to avoid 0 and 1 special cases:
-	benchPickServer(b, "127.0.0.1:1234", "127.0.0.1:1235")
+func TestAllocations(t *testing.T) {
+	t.Run("no allocations with two servers", func(t *testing.T) {
+		benchPickServer(t, "127.0.0.1:1234", "127.0.0.1:1235")
+	})
+	t.Run("no allocations with one server", func(t *testing.T) {
+		benchPickServer(t, "127.0.0.1:1234")
+	})
 }
 
-func BenchmarkPickServer_SingleWithBreaker(b *testing.B) {
-	benchPickServer(b, "127.0.0.1:1234")
-}
 
-func benchPickServer(b *testing.B, servers ...string) {
-	b.ReportAllocs()
-	var ss serversWithBreaker
-	requireNoError(b, ss.resolveServers(servers...))
-	for i := 0; i < b.N; i++ {
-		if _, err := ss.PickServer("some key"); err != nil {
-			b.Fatal(err)
+func benchPickServer(t *testing.T, servers ...string) {
+	br := testing.Benchmark(func(b *testing.B) {
+		b.ReportAllocs()
+		var ss serversWithBreaker
+		requireNoError(b, ss.resolveServers(servers...))
+		for i := 0; i < b.N; i++ {
+			if _, err := ss.PickServer("some key"); err != nil {
+				b.Fatal(err)
+			}
 		}
+	})
+	if br.AllocsPerOp() > 0 {
+		t.Errorf("expected no allocations, got %d", br.AllocsPerOp())
 	}
 }
 
