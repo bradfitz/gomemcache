@@ -127,7 +127,7 @@ var (
 // again with new servers that do resolve). This matches the
 // behaviour at the point the library was forked (https://github.com/bradfitz/gomemcache/blob/a41fca850d0b6f392931a78cbae438803ea0b886/memcache/memcache.go#L124)
 func New(server ...string) *Client {
-	sel := &serversWithBreaker{}
+	sel := &ServerList{}
 	// ignore original dial errors - see comment above
 	sel.SetServers(server...)
 	return NewFromSelector(sel)

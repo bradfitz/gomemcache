@@ -63,8 +63,8 @@ type waitState struct {
 	retry retryState
 }
 
-// serversWithBreaker is a ServerSelector with circuit-breaking
-type serversWithBreaker struct {
+// ServerList is a ServerSelector with circuit-breaking
+type ServerList struct {
 	// protects the available and states fields
 	mu sync.Mutex
 
@@ -81,7 +81,7 @@ type serversWithBreaker struct {
 }
 
 
-var _ ServerSelector = &serversWithBreaker{}
+var _ ServerSelector = &ServerList{}
 
 // staticAddr caches the Network() and String() values from any net.Addr.
 type staticAddr struct {
@@ -107,7 +107,7 @@ func (s *staticAddr) String() string  { return s.str }
 // SetServers returns an error if any of the server names fail to
 // resolve. No attempt is made to connect to the server. If any error
 // is returned, no changes are made to the ServerList.
-func (ss *serversWithBreaker) SetServers(servers ...string) error {
+func (ss *ServerList) SetServers(servers ...string) error {
 	naddr := make([]net.Addr, len(servers))
 	for i, server := range servers {
 		if strings.Contains(server, "/") {
@@ -134,7 +134,7 @@ func (ss *serversWithBreaker) SetServers(servers ...string) error {
 }
 
 // Each iterates over each server, regardless of current availability
-func (ss *serversWithBreaker) Each(f func(net.Addr) error) error {
+func (ss *ServerList) Each(f func(net.Addr) error) error {
 	for _, a := range ss.addrs {
 		if err := f(a); nil != err {
 			return err
@@ -153,7 +153,7 @@ var keyBufPool = sync.Pool{
 	},
 }
 
-func (ss *serversWithBreaker) PickServer(key string) (picked net.Addr, err error) {
+func (ss *ServerList) PickServer(key string) (picked net.Addr, err error) {
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
 
@@ -184,7 +184,7 @@ func (ss *serversWithBreaker) PickServer(key string) (picked net.Addr, err error
 	return ss.available[cs%uint32(len(ss.available))], nil
 }
 
-func (ss *serversWithBreaker) OnResult(addr net.Addr, err error) {
+func (ss *ServerList) OnResult(addr net.Addr, err error) {
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
 
@@ -233,7 +233,7 @@ func (ss *serversWithBreaker) OnResult(addr net.Addr, err error) {
 
 // Sets the retry state for an address, and updates the available list.
 // MUST be called from a method with a lock on the mutex, or will cause concurrent map crashes
-func (ss *serversWithBreaker) setState(addr net.Addr, ws waitState) {
+func (ss *ServerList) setState(addr net.Addr, ws waitState) {
 	if ss.states == nil {
 		ss.states = map[net.Addr]waitState{}
 	}
@@ -242,12 +242,12 @@ func (ss *serversWithBreaker) setState(addr net.Addr, ws waitState) {
 }
 
 // MUST be called from a method with a lock on the mutex, or will cause concurrent map crashes
-func (ss *serversWithBreaker) deleteState(addr net.Addr) {
+func (ss *ServerList) deleteState(addr net.Addr) {
 	delete(ss.states, addr)
 	ss.filterAvailable()
 }
 
-func (ss *serversWithBreaker) filterAvailable() {
+func (ss *ServerList) filterAvailable() {
 	// start with nothing available, and add available servers (with duplicates for balancing)
 	ss.available = ss.available[:0]
 	for _, addr := range ss.addrs {
@@ -263,7 +263,7 @@ func isConnectionError(err error) bool {
 	return errors.As(err, &netErr) || errors.Is(err, io.EOF)
 }
 
-func (ss *serversWithBreaker) scheduleRetry(addr net.Addr, wait time.Duration) {
+func (ss *ServerList) scheduleRetry(addr net.Addr, wait time.Duration) {
 	time.Sleep(wait)
 
 	ss.mu.Lock()

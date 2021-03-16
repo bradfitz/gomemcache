@@ -41,7 +41,7 @@ func TestAllocations(t *testing.T) {
 func benchPickServer(t *testing.T, servers ...string) {
 	br := testing.Benchmark(func(b *testing.B) {
 		b.ReportAllocs()
-		var ss serversWithBreaker
+		var ss ServerList
 		requireNoError(b, ss.SetServers(servers...))
 		for i := 0; i < b.N; i++ {
 			if _, err := ss.PickServer("some key"); err != nil {
@@ -268,8 +268,8 @@ func fuzzer(withKey func(s string)) {
 	}
 }
 
-func createWithServers(t testing.TB, srvs []string) *serversWithBreaker {
-	ss := &serversWithBreaker{}
+func createWithServers(t testing.TB, srvs []string) *ServerList {
+	ss := &ServerList{}
 	err := ss.SetServers(srvs...)
 	requireNoError(t, err)
 	return ss
