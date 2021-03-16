@@ -126,10 +126,10 @@ var (
 // client will fail all calls with ErrNoServers (until SetServers is called
 // again with new servers that do resolve). This matches the
 // behaviour at the point the library was forked (https://github.com/bradfitz/gomemcache/blob/a41fca850d0b6f392931a78cbae438803ea0b886/memcache/memcache.go#L124)
-func New(servers ...string) *Client {
+func New(server ...string) *Client {
 	sel := &serversWithBreaker{}
 	// ignore original dial errors - see comment above
-	sel.SetServers(servers...)
+	sel.SetServers(server...)
 	return NewFromSelector(sel)
 }
 
@@ -266,6 +266,11 @@ func (cte *ConnectTimeoutError) Error() string {
 }
 
 func (c *Client) dial(addr net.Addr) (net.Conn, error) {
+	type connError struct {
+		cn  net.Conn
+		err error
+	}
+
 	nc, err := net.DialTimeout(addr.Network(), addr.String(), c.netTimeout())
 	if err == nil {
 		return nc, nil
