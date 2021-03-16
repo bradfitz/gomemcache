@@ -116,7 +116,11 @@ var (
 )
 
 // New returns a memcache client using the provided server(s)
-// with equal weight, and circuit-breaking on network errors.
+// with equal weight. If a server is listed multiple times,
+// it gets a proportional amount of weight. After network errors
+// circuit-breaking logic will route requests to other servers if
+// available, or will start returning ErrNoServers if all servers are
+// unavailable.
 //
 // Note: if there is an err in the initial resolution this
 // client will fail all calls with ErrNoServers (until SetServers is called
