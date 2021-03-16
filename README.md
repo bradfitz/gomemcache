@@ -12,6 +12,7 @@ The following changes were made:
 - ServerSelector.OnResult added as a hook for the circuit-breaking logic
 - SetServers removed - we didn't use the ability to set the servers
   at runtime and it complicated the code
+- Depends on errors.As, so new minimum go version is 1.13
 
 
 ## Installing

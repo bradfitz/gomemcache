@@ -141,19 +141,16 @@ func TestTwoServers(t *testing.T) {
 	functionalTest(t, []string{"42111", "42222"})
 }
 
-// This is a functional test that spins up and repeatedly takes down a memcached node.
+// This is a functional test that spins up and repeatedly takes down a memcached nodes
+// while multiple writer routines attempt to Set keys
 func functionalTest(t *testing.T, ports []string) {
 	srvs := []string{}
 	for _, port := range ports {
 		srvs = append(srvs, fmt.Sprintf("localhost:%s", port))
 	}
-	cli := New(srvs...)
+	client := New(srvs...)
 
-	errCounts := map[string]int{}
-	done := make(chan struct{})
 	wg := sync.WaitGroup{}
-	networkErrorCategory := "[network error]"
-	internalTimeoutError := "[memcachepl timeout]"
 
 	server := func(port string) {
 		time.Sleep(time.Millisecond * time.Duration(rand.Int31n(25)))
@@ -168,24 +165,18 @@ func functionalTest(t *testing.T, ports []string) {
 		wg.Done()
 	}
 
-	wg.Add(len(srvs))
-	for _, port := range ports {
-		go server(port)
-	}
-
-	go (func() {
-		wg.Wait()
-		close(done)
-	})()
-
+	done := make(chan struct{})
 	mx := sync.Mutex{}
+	resultCounts := map[string]int{}
+	networkErrorCategory := "[network error]"
+	internalTimeoutError := "[memcachepl timeout]"
 	writer := func() {
 		for {
 			select {
 			case <-done:
 				break
 			default:
-				err := cli.Set(&Item{
+				err := client.Set(&Item{
 					Key:   "hi",
 					Value: []byte("val"),
 				})
@@ -199,13 +190,25 @@ func functionalTest(t *testing.T, ports []string) {
 					errString = internalTimeoutError
 				}
 				mx.Lock()
-				errCounts[errString]++
+				resultCounts[errString]++
 				mx.Unlock()
 			}
 			time.Sleep(time.Duration(rand.Int31n(5)) * time.Millisecond)
 		}
 	}
 
+	// start servers
+	wg.Add(len(srvs))
+	for _, port := range ports {
+		go server(port)
+	}
+
+	go (func() {
+		wg.Wait()
+		close(done)
+	})()
+
+	// start writers
 	go writer()
 	go writer()
 	go writer()
@@ -213,18 +216,20 @@ func functionalTest(t *testing.T, ports []string) {
 	go writer()
 	go writer()
 
+	// wait for test run to end
 	wg.Wait()
 
+	// avoid race-detection errors when we range over results
 	mx.Lock()
 	defer mx.Unlock()
 
 	unexpectedErrors := map[string]struct{}{}
 	total := 0
-	for errVal, count := range errCounts {
+	for errVal, count := range resultCounts {
 		total += count
 		switch errVal {
 
-		// filter out expected errors
+		// filter out success, and expected errors
 		case "<nil>":
 		case "EOF":
 		case internalTimeoutError:
@@ -237,16 +242,16 @@ func functionalTest(t *testing.T, ports []string) {
 	}
 
 	// we're up for approximately 2.5 seconds out of every three, so we should have a lot of successes too
-	assertGreaterOrEqual(t, errCounts["<nil>"], total/10, "expected many successes")
+	assertGreaterOrEqual(t, resultCounts["<nil>"], total/10, "expected many successes")
 
 	for s := range unexpectedErrors {
 		t.Errorf("unexpected errors during test - either indicates a bug or something that needs categorisation: %s", s)
 	}
 
-	// test that we have greatly more breaker errors than network errors, reducing the reconnection by a large factor
-	networkFails := errCounts[networkErrorCategory] + errCounts[internalTimeoutError] +
-		errCounts["EOF"]
-	assertGreaterOrEqual(t, errCounts[ErrNoServers.Error()], networkFails*10, "didn't reduce reconnection load as expected")
+	// test that we have greatly more breaker errors than network errors, reducing the reconnections during unavailability by a large factor
+	networkFails := resultCounts[networkErrorCategory] + resultCounts[internalTimeoutError] +
+		resultCounts["EOF"]
+	assertGreaterOrEqual(t, resultCounts[ErrNoServers.Error()], networkFails*10, "didn't reduce reconnection load as expected")
 }
 
 func fuzzer(withKey func(s string)) {
@@ -279,9 +284,9 @@ func assertEqualError(t testing.TB, err error, msg string) {
 	}
 }
 
-func assertGreaterOrEqual(t testing.TB, expected, val int, msg string) {
+func assertGreaterOrEqual(t testing.TB, candidate, comparison int, msg string) {
 	t.Helper()
-	if val < expected {
-		t.Errorf("%s: expected >= %d, got %d", msg, expected, val)
+	if candidate < comparison {
+		t.Errorf("%s: expected >= %d, got %d", msg, comparison, candidate)
 	}
 }
