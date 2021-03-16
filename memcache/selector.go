@@ -80,16 +80,6 @@ type serversWithBreaker struct {
 	states map[net.Addr]waitState
 }
 
-// NewSelectorWithBreaker will resolve all addrs once, and return
-// a selector list that takes addresses out of the list on error.
-// Addresses are retried with an exponential backoff.
-func NewSelectorWithBreaker(addrs []string) (ServerSelector, error) {
-	ss := new(serversWithBreaker)
-	if err := ss.resolveServers(addrs...); err != nil {
-		return nil, err
-	}
-	return ss, nil
-}
 
 var _ ServerSelector = &serversWithBreaker{}
 
@@ -108,9 +98,16 @@ func newStaticAddr(a net.Addr) net.Addr {
 func (s *staticAddr) Network() string { return s.ntw }
 func (s *staticAddr) String() string  { return s.str }
 
-// resolveServers returns an error if any of the server names fail to
-// resolve. No attempt is made to connect to the server.
-func (ss *serversWithBreaker) resolveServers(servers ...string) error {
+// SetServers changes a ServerList's set of servers at runtime and is
+// safe for concurrent use by multiple goroutines.
+//
+// Each server is given equal weight. A server is given more weight
+// if it's listed multiple times.
+//
+// SetServers returns an error if any of the server names fail to
+// resolve. No attempt is made to connect to the server. If any error
+// is returned, no changes are made to the ServerList.
+func (ss *serversWithBreaker) SetServers(servers ...string) error {
 	naddr := make([]net.Addr, len(servers))
 	for i, server := range servers {
 		if strings.Contains(server, "/") {

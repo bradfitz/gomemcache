@@ -117,9 +117,15 @@ var (
 
 // New returns a memcache client using the provided server(s)
 // with equal weight, and circuit-breaking on network errors.
-func New(server ...string) *Client {
-	// ignore original dial
-	sel, _ := NewSelectorWithBreaker(server)
+//
+// Note: if there is an err in the initial resolution this
+// client will fail all calls with ErrNoServers (until SetServers is called
+// again with new servers that do resolve). This matches the
+// behaviour at the point the library was forked (https://github.com/bradfitz/gomemcache/blob/a41fca850d0b6f392931a78cbae438803ea0b886/memcache/memcache.go#L124)
+func New(servers ...string) *Client {
+	sel := &serversWithBreaker{}
+	// ignore original dial errors - see comment above
+	sel.SetServers(servers...)
 	return NewFromSelector(sel)
 }
 

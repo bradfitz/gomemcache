@@ -42,7 +42,7 @@ func benchPickServer(t *testing.T, servers ...string) {
 	br := testing.Benchmark(func(b *testing.B) {
 		b.ReportAllocs()
 		var ss serversWithBreaker
-		requireNoError(b, ss.resolveServers(servers...))
+		requireNoError(b, ss.SetServers(servers...))
 		for i := 0; i < b.N; i++ {
 			if _, err := ss.PickServer("some key"); err != nil {
 				b.Fatal(err)
@@ -60,11 +60,9 @@ func benchPickServer(t *testing.T, servers ...string) {
 // If a fix is required: probably simplest to change the startingWait to a var and modify in this test
 func TestBehaviourSynchronously(t *testing.T) {
 	create := func(t *testing.T) (ServerSelector, net.Addr, net.Addr) {
-		ss, err := NewSelectorWithBreaker([]string{"127.0.0.1:4200", "127.255.0.1:4200"})
-		requireNoError(t, err)
-		wb := ss.(*serversWithBreaker)
-		addrA := wb.addrs[0]
-		addrB := wb.addrs[1]
+		ss := createWithServers(t, []string{"127.0.0.1:4200", "127.255.0.1:4200"})
+		addrA := ss.addrs[0]
+		addrB := ss.addrs[1]
 		if addrA == addrB {
 			t.Fatalf("for test to be valid addresses must differ")
 		}
@@ -271,11 +269,11 @@ func fuzzer(withKey func(s string)) {
 }
 
 func createWithServers(t testing.TB, srvs []string) *serversWithBreaker {
-	ss, err := NewSelectorWithBreaker(srvs)
+	ss := &serversWithBreaker{}
+	err := ss.SetServers(srvs...)
 	requireNoError(t, err)
-	return ss.(*serversWithBreaker)
+	return ss
 }
-
 
 func requireNoError(t testing.TB, err error) {
 	t.Helper()
