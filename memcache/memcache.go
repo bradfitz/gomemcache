@@ -258,7 +258,6 @@ func (cte *ConnectTimeoutError) Error() string {
 func (c *Client) dial(addr net.Addr) (net.Conn, error) {
 	nc, err := net.DialTimeout(addr.Network(), addr.String(), c.netTimeout())
 	if err == nil {
-		c.selector.OnResult(addr, err)
 		return nc, nil
 	}
 
@@ -296,6 +295,7 @@ func (c *Client) onItem(item *Item, fn func(*Client, *bufio.ReadWriter, *Item) e
 	}
 	cn, err := c.getConn(addr)
 	if err != nil {
+		c.selector.OnResult(addr, err)
 		return err
 	}
 	defer cn.condRelease(&err)
@@ -347,6 +347,7 @@ func (c *Client) withKeyAddr(key string, fn func(net.Addr) error) (err error) {
 func (c *Client) withAddrRw(addr net.Addr, fn func(*bufio.ReadWriter) error) (err error) {
 	cn, err := c.getConn(addr)
 	if err != nil {
+		c.selector.OnResult(addr, err)
 		return err
 	}
 	defer cn.condRelease(&err)
