@@ -276,8 +276,7 @@ func (ss *serversWithBreaker) scheduleRetry(addr net.Addr, wait time.Duration) {
 		// recovered while routine was sleeping
 		return
 	}
-	// Sometimes we'll end up here not in retryWait due to concurrent operations,
-	// and that retries duration is not fixed. e.g
+	// Sometimes we'll end up here not in retryWait because of concurrent operations:
 	//
 	// 1. error and retry (1) scheduled
 	//    1.1. scheduleRetry(A) start waiting
@@ -286,9 +285,9 @@ func (ss *serversWithBreaker) scheduleRetry(addr net.Addr, wait time.Duration) {
 	// 4. scheduledRetry(A) wakes up, and sets us in retryReady
 	// 5. scheduledRetry(B) wakes up, and sees we're in retryReady
 	//
-	// We could reverse 4 and 5 if 1) happened after many retries, which
-	// would also mean we could wake up in retryRunning (B wakes up after
-	// short wait, schedules retry, and then address is picked for a retry)
+	// We could end up in retryRunning too: 4 and 5 would be reversed if 1) used a long wait (e.g was a backoff
+	// after many retries): B wakes up first after its shorter wait, schedules retry, and then the address is picked
+	// and the retry is run before A wakes up
 	if ws.retry != retryWait {
 		return
 	}
