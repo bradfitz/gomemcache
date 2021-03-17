@@ -194,6 +194,9 @@ func (ss *ServerList) PickServer(key string) (picked net.Addr, err error) {
 	cs := crc32.ChecksumIEEE((*bufp)[:n])
 	keyBufPool.Put(bufp)
 
+	// Note: this currently doesn't perform consistent hashing during outages. We could
+	// look to moving to an algorithm that gives as consistent as possible hashing as the
+	// available nodes change
 	return ss.available[cs%uint32(len(ss.available))], nil
 }
 
