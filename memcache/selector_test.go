@@ -140,6 +140,74 @@ func TestRecoversOnSuccessfulCommunication(t *testing.T) {
 	requireNoError(t, err)
 }
 
+func TestInternalsTests(t *testing.T) {
+	// these tests are fragile, but worth it to give us confidence that the
+	// methods work before we layer on concurrency
+	t.Run("filterAvailable filters out addresses listed multiple times to support load-balancing", func(t *testing.T) {
+		// single routine, so not using the locking that should be used on these methods
+		ss := &ServerList{}
+		srvA := "127.0.0.1:1234"
+		srvB := "127.255.0.1:1234"
+		ss.SetServers(srvA, srvA, srvB)
+		// relies on SetServers resolving in order
+		addrA := ss.addrs[0]
+		ss.setState(addrA, waitState{
+			retry: retryWait,
+		})
+		if len(ss.available) != 1 {
+			t.Fatalf("should have filtered out unavailable servers")
+		}
+		if ss.available[0].String() != srvB {
+			t.Fatalf("expected %q to be available, but found %q", srvA, ss.available[0].String())
+		}
+	})
+
+	t.Run("filterAvailable doesn't filter available servers", func(t *testing.T) {
+		// single routine, so not using the locking that should be used on these methods
+		ss := &ServerList{}
+		srvA := "127.0.0.1:1234"
+		ss.SetServers(srvA, srvA)
+		ss.filterAvailable()
+		if len(ss.available) != 2 {
+			t.Fatalf("unexpectedly filtered servers")
+		}
+	})
+
+	t.Run("filterAvailable considers retryReady servers available", func(t *testing.T) {
+		ss := &ServerList{}
+		ss.SetServers("127.0.0.1:1234")
+		ss.setState(ss.addrs[0], waitState{
+			retry: retryReady,
+		})
+		if len(ss.available) != 1 {
+			t.Fatalf("unexpectedly filtered servers")
+		}
+	})
+
+	t.Run("filterAvailable does not consider retryRunning servers available", func(t *testing.T) {
+		ss := &ServerList{}
+		ss.SetServers("127.0.0.1:1234")
+		ss.setState(ss.addrs[0], waitState{
+			retry: retryRunning,
+		})
+		if len(ss.available) > 0 {
+			t.Fatalf("should have filtered server")
+		}
+	})
+
+	t.Run("servers are available after state is removed", func(t *testing.T) {
+		ss := &ServerList{}
+		ss.SetServers("127.0.0.1:1234")
+		ss.setState(ss.addrs[0], waitState{
+			retry: retryRunning,
+		})
+		ss.markRecovered(ss.addrs[0])
+		if len(ss.available) != 1 {
+			t.Fatalf("server should be available")
+		}
+	})
+}
+
 func TestOneServer(t *testing.T) {
 	functionalTest(t, []string{"42111"})
 }

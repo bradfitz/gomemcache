@@ -94,14 +94,14 @@ type staticAddr struct {
 }
 
 func newStaticAddr(a net.Addr) net.Addr {
-	return &staticAddr{
+	return staticAddr{
 		ntw: a.Network(),
 		str: a.String(),
 	}
 }
 
-func (s *staticAddr) Network() string { return s.ntw }
-func (s *staticAddr) String() string  { return s.str }
+func (s staticAddr) Network() string { return s.ntw }
+func (s staticAddr) String() string  { return s.str }
 
 // SetServers changes a ServerList's set of servers at runtime and is
 // safe for concurrent use by multiple goroutines.
@@ -199,7 +199,7 @@ func (ss *ServerList) OnResult(addr net.Addr, err error) {
 		// server is considered available once we successfully
 		// communicate
 		if _, ok := ss.states[addr]; ok {
-			ss.deleteState(addr)
+			ss.markRecovered(addr)
 		}
 		return
 	}
@@ -249,7 +249,7 @@ func (ss *ServerList) setState(addr net.Addr, ws waitState) {
 }
 
 // MUST be called from a method with a lock on the mutex, or will cause concurrent map crashes
-func (ss *ServerList) deleteState(addr net.Addr) {
+func (ss *ServerList) markRecovered(addr net.Addr) {
 	delete(ss.states, addr)
 	ss.filterAvailable()
 }
