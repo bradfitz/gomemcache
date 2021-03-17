@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
+	"math/rand"
 	"net"
 	"strings"
 	"sync"
@@ -140,9 +141,13 @@ func (ss *ServerList) SetServers(servers ...string) error {
 
 // Each iterates over each server, regardless of current availability
 func (ss *ServerList) Each(f func(net.Addr) error) error {
+	// As we need to take the lock inside PickServers, make a stable slice of attrs
+	// If changes are made to the code that means the underyling array for addrs could be
+	// mutated this should become a copy
 	ss.mu.RLock()
-	defer ss.mu.RUnlock()
-	for _, a := range ss.addrs {
+	addrs := ss.addrs[:]
+	ss.mu.RUnlock()
+	for _, a := range addrs {
 		if err := f(a); nil != err {
 			return err
 		}
@@ -222,11 +227,9 @@ func (ss *ServerList) OnResult(addr net.Addr, err error) {
 		case retryRunning:
 			// backoff: we're here because we hit an error during the retry
 			ws = st
-			ws.wait *= 2
+			// retries with jitter: grow exponentially by [1.5, 2.0)
+			ws.wait = backoff(ws.wait)
 			ws.retry = retryWait
-			if ws.wait > maxRetryWait {
-				ws.wait = maxRetryWait
-			}
 		default:
 			panic(fmt.Errorf("unexpected retry state: %q", st.retry))
 		}
@@ -236,6 +239,14 @@ func (ss *ServerList) OnResult(addr net.Addr, err error) {
 	if ws.retry == retryWait {
 		go ss.scheduleRetry(addr, ws.wait)
 	}
+}
+
+func backoff(wait time.Duration) time.Duration {
+	newWait := time.Duration(float64(wait) * (1.5 + rand.Float64() * 0.5))
+	if newWait > maxRetryWait {
+		return maxRetryWait
+	}
+	return newWait
 }
 
 // Sets the retry state for an address, and updates the available list.

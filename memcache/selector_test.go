@@ -375,3 +375,20 @@ func assertGreaterOrEqual(t testing.TB, candidate, comparison int, msg string) {
 		t.Errorf("%s: expected >= %d, got %d", msg, comparison, candidate)
 	}
 }
+
+func Test_backoff(t *testing.T) {
+	for i := 0; i < 1000; i++ {
+		bo := backoff(time.Second)
+		if bo <= time.Millisecond * 1500 || bo >= time.Second * 2 {
+			t.Fatalf("jitter cause growth outside of expected bounds: %v", bo)
+		}
+	}
+
+	wait := backoff(startingWait)
+	for i := 0; i < 50; i++ {
+		wait = backoff(wait)
+		if wait > maxRetryWait {
+			t.Fatalf("backoff allowed retry wait longer than max: %v", wait)
+		}
+	}
+}
