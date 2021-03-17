@@ -32,6 +32,8 @@ jobs:
       uses: actions/checkout@v2
     - name: Install memcache
       run: sudo apt-get install memcached
+    - name: Run memcache
+      run: memcached -d
     - name: Run tests
       run: go test -v -race ./...
 
@@ -46,6 +48,8 @@ jobs:
       run: sudo apt-get install memcached
     - name: Checkout code
       uses: actions/checkout@v2
+    - name: Run memcache
+      run: memcached -d
     - name: Calc coverage
       run: |
         go test -v -covermode=count -coverprofile=coverage.out ./...
