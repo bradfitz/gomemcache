@@ -141,7 +141,8 @@ func (ss *ServerList) SetServers(servers ...string) error {
 
 // Each iterates over each server, regardless of current availability
 func (ss *ServerList) Each(f func(net.Addr) error) error {
-	// As we need to take the lock inside PickServers, make a stable slice of attrs
+	// As we need to take the lock inside PickServers, make a stable slice of attrs (otherwise
+	// we'd deadlock).
 	// If changes are made to the code that means the underyling array for addrs could be
 	// mutated this should become a copy
 	ss.mu.RLock()
