@@ -231,7 +231,6 @@ func (ss *ServerList) OnResult(addr net.Addr, err error) {
 		case retryRunning:
 			// backoff: we're here because we hit an error during the retry
 			ws = st
-			// retries with jitter: grow exponentially by [1.5, 2.0)
 			ws.wait = backoff(ws.wait)
 			ws.retry = retryWait
 		default:
@@ -246,6 +245,7 @@ func (ss *ServerList) OnResult(addr net.Addr, err error) {
 }
 
 func backoff(wait time.Duration) time.Duration {
+	// retries with jitter: grows by [1.5, 2) each time
 	newWait := time.Duration(float64(wait) * (1.5 + rand.Float64() * 0.5))
 	if newWait > maxRetryWait {
 		return maxRetryWait
