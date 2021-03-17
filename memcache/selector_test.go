@@ -69,7 +69,7 @@ func TestBehaviourSynchronously(t *testing.T) {
 		return ss, addrA, addrB
 	}
 
-	t.Run("after a net error, an address should be not be pickable until retried", func(t *testing.T) {
+	t.Run("after a net error, an address should be not be pickable", func(t *testing.T) {
 		ss, addrA, _ := create(t)
 
 		ss.OnResult(addrA, &net.OpError{})
@@ -101,29 +101,30 @@ func TestBehaviourSynchronously(t *testing.T) {
 		}
 	})
 
-	t.Run("after a net error, an address should be removed", func(t *testing.T) {
+	t.Run("on error a retry is scheduled, and after the wait the addr is available again", func(t *testing.T) {
 		ss, addrA, addrB := create(t)
 		// when all address have errors, we return an error that signals no servers are available (circuit breaker)
 		ss.OnResult(addrA, &net.OpError{})
 		ss.OnResult(addrB, &net.OpError{})
 
 		_, err := ss.PickServer("hi")
-		assertEqualError(t, err, "memcache: no servers configured or available")
+		assertEqualError(t, err, ErrNoServers.Error())
+
+		// ensure that the retry goroutine that schedule didn't make the server available again before we expect
+		time.Sleep(startingWait / 2)
+		_, err = ss.PickServer("hi")
+		assertEqualError(t, err, ErrNoServers.Error())
+
+		// and that after the retry wait expires we do schedule a retry
+		time.Sleep(startingWait * 2)
+		a, err := ss.PickServer("hi")
+		if err != nil {
+			t.Fatalf("should have become eligable for a retry")
+		}
+		if a == nil {
+			t.Fatalf("no addr returned for retry")
+		}
 	})
-}
-
-func TestRetriesAfterError(t *testing.T) {
-	ss := createWithServers(t, []string{"127.0.0.1:1234"})
-
-	addrA := ss.addrs[0]
-	ss.OnResult(addrA, &net.OpError{})
-	_, err := ss.PickServer("hi")
-	assertEqualError(t, err, "memcache: no servers configured or available")
-
-	time.Sleep(startingWait * 2)
-	_, err = ss.PickServer("hi")
-	// should have become available again
-	requireNoError(t, err)
 }
 
 func TestRecoversOnSuccessfulCommunication(t *testing.T) {
@@ -132,7 +133,7 @@ func TestRecoversOnSuccessfulCommunication(t *testing.T) {
 
 	ss.OnResult(addrA, &net.OpError{})
 	_, err := ss.PickServer("hi")
-	assertEqualError(t, err, "memcache: no servers configured or available")
+	assertEqualError(t, err, ErrNoServers.Error())
 
 	ss.OnResult(addrA, nil)
 	_, err = ss.PickServer("hi")
@@ -141,7 +142,7 @@ func TestRecoversOnSuccessfulCommunication(t *testing.T) {
 }
 
 func TestInternalsTests(t *testing.T) {
-	// these tests are fragile, but worth it to give us confidence that the
+	// these tests are fragile vs implementation changes, but worth it to give us confidence that the
 	// methods work before we layer on concurrency
 	t.Run("filterAvailable filters out addresses listed multiple times to support load-balancing", func(t *testing.T) {
 		// single routine, so not using the locking that should be used on these methods
