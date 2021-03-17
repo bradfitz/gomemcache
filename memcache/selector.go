@@ -199,7 +199,7 @@ func (ss *ServerList) OnResult(addr net.Addr, err error) {
 		// server is considered available once we successfully
 		// communicate
 		if _, ok := ss.states[addr]; ok {
-			ss.markRecovered(addr)
+			ss.deleteState(addr)
 		}
 		return
 	}
@@ -249,7 +249,7 @@ func (ss *ServerList) setState(addr net.Addr, ws waitState) {
 }
 
 // MUST be called from a method with a lock on the mutex, or will cause concurrent map crashes
-func (ss *ServerList) markRecovered(addr net.Addr) {
+func (ss *ServerList) deleteState(addr net.Addr) {
 	delete(ss.states, addr)
 	ss.filterAvailable()
 }

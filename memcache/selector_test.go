@@ -202,7 +202,7 @@ func TestInternalsTests(t *testing.T) {
 		ss.setState(ss.addrs[0], waitState{
 			retry: retryRunning,
 		})
-		ss.markRecovered(ss.addrs[0])
+		ss.deleteState(ss.addrs[0])
 		if len(ss.available) != 1 {
 			t.Fatalf("server should be available")
 		}
