@@ -84,7 +84,10 @@ func TestBehaviourSynchronously(t *testing.T) {
 
 	t.Run("after a successful retry, an address should be available again", func(t *testing.T) {
 		ss, addrA, _ := create(t)
+
+		ss.OnResult(addrA, &net.OpError{})
 		ss.OnResult(addrA, nil)
+
 		gotAddr := 0
 		fuzzer(func(k string) {
 			addr, err := ss.PickServer(k)
@@ -208,11 +211,6 @@ func functionalTest(t *testing.T, ports []string) {
 		go server(port)
 	}
 
-	go (func() {
-		wg.Wait()
-		close(done)
-	})()
-
 	// start writers
 	go writer()
 	go writer()
@@ -223,6 +221,7 @@ func functionalTest(t *testing.T, ports []string) {
 
 	// wait for test run to end
 	wg.Wait()
+	close(done)
 
 	// avoid race-detection errors when we range over results
 	mx.Lock()
@@ -248,17 +247,27 @@ func functionalTest(t *testing.T, ports []string) {
 
 	t.Log("aggregate result of Set calls", resultCounts)
 
-	// we're up for approximately 2.5 seconds out of every three, so we should have a lot of successes too
-	assertGreaterOrEqual(t, resultCounts["<nil>"], total/10, "expected many successes")
-
 	for s := range unexpectedErrors {
 		t.Errorf("unexpected errors during test - either indicates a bug or something that needs categorisation: %s", s)
 	}
 
-	// test that we have greatly more breaker errors than network errors, reducing the reconnections during unavailability by a large factor
+	// These ratios are just rough observed values from the configuration above setting the amount
+	// of time the memcache nodes are available. They're not tight boundaries as that would create test
+	// flakiness. They're designed to ensure that the implementation is having the desired effect.
+
+	// We're up for approximately 2.5 seconds out of every three, so we should have decent number of success too
+	// Enforcing success ratio avoids allowing a bug that causes us to return ErrNoServers continually and thus passes the 'more breaker
+	// errors than network errors' test below.
+	expectedSuccessRatio := 10
+	assertGreaterOrEqual(t, resultCounts["<nil>"], total/expectedSuccessRatio, "expected many successes")
+
+	// We want greatly more breaker errors than network errors, reducing the reconnections attempts during unavailability by a large factor
+	// Although this is controlled by the test configuration above, what we're demonstrating here is that we do manage to prevent a spike
+	// in reconnections during the 5 up->down transitions
+	breakerToNetworkErrorRatio := 80
 	networkFails := resultCounts[networkErrorCategory] + resultCounts[internalTimeoutError] +
 		resultCounts["EOF"]
-	assertGreaterOrEqual(t, resultCounts[ErrNoServers.Error()], networkFails*10, "didn't reduce reconnection load as expected")
+	assertGreaterOrEqual(t, resultCounts[ErrNoServers.Error()], networkFails*breakerToNetworkErrorRatio, "didn't reduce reconnection load as expected")
 }
 
 func fuzzer(withKey func(s string)) {

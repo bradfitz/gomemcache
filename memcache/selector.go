@@ -46,6 +46,12 @@ const maxRetryWait = time.Second * 10
 const startingWait = time.Millisecond * 10
 
 // retryState drives the per connection state-machine through the retry process
+//
+// State changes:
+// 1. retryWait is the starting retry state for a failed connection to a given address. The address is removed from the list of available addresses that PickServer can choose from.
+// 2. Whenever an connection enters retryWait, a goroutine is created that waits before changing the retryWait state to retryReady. Once this happens the address is put back in available.
+// 3. If the address is picked by PickServer and it is in the retryReady state, the state moves to retryRunning (testing the connection since we know an OnResult call is always made post dial or reading / writing from a connection).
+// 4. In the retryRunning state, future errors will bring the address back into a retryWait state, and will double the wait time for the scheduled goroutine mentioned in point 3.
 type retryState string
 
 const (
@@ -65,8 +71,8 @@ type waitState struct {
 
 // ServerList is a ServerSelector with circuit-breaking
 type ServerList struct {
-	// protects the available and states fields
-	mu sync.Mutex
+	// should be used for anything touching addrs, available or states
+	mu sync.RWMutex
 
 	// addrs - not mutated after construction
 	addrs []net.Addr
@@ -79,7 +85,6 @@ type ServerList struct {
 	// available for connection
 	states map[net.Addr]waitState
 }
-
 
 var _ ServerSelector = &ServerList{}
 
@@ -135,6 +140,8 @@ func (ss *ServerList) SetServers(servers ...string) error {
 
 // Each iterates over each server, regardless of current availability
 func (ss *ServerList) Each(f func(net.Addr) error) error {
+	ss.mu.RLock()
+	defer ss.mu.RUnlock()
 	for _, a := range ss.addrs {
 		if err := f(a); nil != err {
 			return err
@@ -221,7 +228,7 @@ func (ss *ServerList) OnResult(addr net.Addr, err error) {
 				ws.wait = maxRetryWait
 			}
 		default:
-			panic(fmt.Errorf("unexpected retry state: %s", st.retry))
+			panic(fmt.Errorf("unexpected retry state: %q", st.retry))
 		}
 	}
 	ss.setState(addr, ws)
@@ -247,6 +254,7 @@ func (ss *ServerList) deleteState(addr net.Addr) {
 	ss.filterAvailable()
 }
 
+// MUST be called from a method with a lock on the mutex
 func (ss *ServerList) filterAvailable() {
 	// start with nothing available, and add available servers (with duplicates for balancing)
 	ss.available = ss.available[:0]
