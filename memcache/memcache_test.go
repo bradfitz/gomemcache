@@ -33,7 +33,7 @@ import (
 const testServer = "localhost:11211"
 
 func setup(t *testing.T) bool {
-	c, err := net.Dial("tcp", testServer)
+	c, err := net.DialTimeout("tcp", testServer, time.Second * 3)
 	if err != nil {
 		t.Skipf("skipping test; no server running at %s", testServer)
 	}
