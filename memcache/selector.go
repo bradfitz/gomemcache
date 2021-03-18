@@ -17,10 +17,15 @@ limitations under the License.
 package memcache
 
 import (
+	"errors"
+	"fmt"
 	"hash/crc32"
+	"io"
+	"math/rand"
 	"net"
 	"strings"
 	"sync"
+	"time"
 )
 
 // ServerSelector is the interface that selects a memcache server
@@ -32,14 +37,57 @@ type ServerSelector interface {
 	// PickServer returns the server address that a given item
 	// should be shared onto.
 	PickServer(key string) (net.Addr, error)
+	// Each iterates func over servers, returning the first non-nil error
 	Each(func(net.Addr) error) error
+	// OnResult informs the selector of the result of an operation - err is nil on success
+	OnResult(addr net.Addr, err error)
 }
 
-// ServerList is a simple ServerSelector. Its zero value is usable.
-type ServerList struct {
-	mu    sync.RWMutex
-	addrs []net.Addr
+const maxRetryWait = time.Second * 10
+const startingWait = time.Millisecond * 10
+
+// retryState drives the per connection state-machine through the retry process
+//
+// State changes:
+// 1. retryWait is the starting retry state for a failed connection to a given address. The address is removed from the list of available addresses that PickServer can choose from.
+// 2. Whenever an connection enters retryWait, a goroutine is created that waits before changing the retryWait state to retryReady. Once this happens the address is put back in available.
+// 3. If the address is picked by PickServer and it is in the retryReady state, the state moves to retryRunning (testing the connection since we know an OnResult call is always made post dial or reading / writing from a connection).
+// 4. In the retryRunning state, future errors will bring the address back into a retryWait state, and will double the wait time for the scheduled goroutine mentioned in point 3.
+type retryState string
+
+const (
+	// kept unavailable until ready for retry
+	retryWait retryState = "retryWait"
+	// ready to be picked
+	retryReady retryState = "retryReady"
+	// address is having a single operation run against it to see if sever has come back online
+	retryRunning retryState = "retryRunning"
+)
+
+type waitState struct {
+	addr net.Addr
+	wait time.Duration
+	retry retryState
 }
+
+// ServerList is a ServerSelector with circuit-breaking
+type ServerList struct {
+	// should be used for anything touching addrs, available or states
+	mu sync.RWMutex
+
+	// addrs - not mutated after construction
+	addrs []net.Addr
+
+	// optimization: the presence of this field allows us to avoid allocations in PickServer, while preserving the
+	// ability to load balance with duplicate addrs
+	available []net.Addr
+	// records the waitState of servers that have had connection issues. This is
+	// used in filterAvailable to decide which servers are currently considered
+	// available for connection
+	states map[net.Addr]waitState
+}
+
+var _ ServerSelector = &ServerList{}
 
 // staticAddr caches the Network() and String() values from any net.Addr.
 type staticAddr struct {
@@ -47,14 +95,14 @@ type staticAddr struct {
 }
 
 func newStaticAddr(a net.Addr) net.Addr {
-	return &staticAddr{
+	return staticAddr{
 		ntw: a.Network(),
 		str: a.String(),
 	}
 }
 
-func (s *staticAddr) Network() string { return s.ntw }
-func (s *staticAddr) String() string  { return s.str }
+func (s staticAddr) Network() string { return s.ntw }
+func (s staticAddr) String() string  { return s.str }
 
 // SetServers changes a ServerList's set of servers at runtime and is
 // safe for concurrent use by multiple goroutines.
@@ -86,14 +134,21 @@ func (ss *ServerList) SetServers(servers ...string) error {
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
 	ss.addrs = naddr
+	ss.available = make([]net.Addr, 0, len(ss.addrs))
+	ss.filterAvailable()
 	return nil
 }
 
-// Each iterates over each server calling the given function
+// Each iterates over each server, regardless of current availability
 func (ss *ServerList) Each(f func(net.Addr) error) error {
+	// As we need to take the lock inside PickServers, make a stable slice of attrs (otherwise
+	// we'd deadlock).
+	// If changes are made to the code that means the underlying array for addrs could be
+	// mutated this should become a copy
 	ss.mu.RLock()
-	defer ss.mu.RUnlock()
-	for _, a := range ss.addrs {
+	addrs := ss.addrs[:]
+	ss.mu.RUnlock()
+	for _, a := range addrs {
 		if err := f(a); nil != err {
 			return err
 		}
@@ -111,19 +166,152 @@ var keyBufPool = sync.Pool{
 	},
 }
 
-func (ss *ServerList) PickServer(key string) (net.Addr, error) {
-	ss.mu.RLock()
-	defer ss.mu.RUnlock()
-	if len(ss.addrs) == 0 {
+func (ss *ServerList) PickServer(key string) (picked net.Addr, err error) {
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+
+	// if we pick a connection for retry, remove it from the available pool till we
+	// hear the result
+	defer (func() {
+		if err != nil {
+			return
+		}
+		// remove the address from available roster again to avoid multiple retries
+		if ws, ok := ss.states[picked]; ok && ws.retry == retryReady {
+			ws.retry = retryRunning
+			ss.setState(picked, ws)
+		}
+	})()
+
+	if len(ss.available) == 0 {
 		return nil, ErrNoServers
 	}
-	if len(ss.addrs) == 1 {
-		return ss.addrs[0], nil
+	if len(ss.available) == 1 {
+		return ss.available[0], nil
 	}
 	bufp := keyBufPool.Get().(*[]byte)
 	n := copy(*bufp, key)
 	cs := crc32.ChecksumIEEE((*bufp)[:n])
 	keyBufPool.Put(bufp)
 
-	return ss.addrs[cs%uint32(len(ss.addrs))], nil
+	// Note: this currently doesn't perform consistent hashing during outages. We could
+	// look to moving to an algorithm that gives as consistent as possible hashing as the
+	// available nodes change
+	return ss.available[cs%uint32(len(ss.available))], nil
+}
+
+func (ss *ServerList) OnResult(addr net.Addr, err error) {
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+
+	if err == nil || !isConnectionError(err) {
+		// server is considered available once we successfully
+		// communicate
+		if _, ok := ss.states[addr]; ok {
+			ss.deleteState(addr)
+		}
+		return
+	}
+
+	ws := waitState{
+		addr:  addr,
+		wait:  startingWait,
+		retry: retryWait,
+	}
+	if st, ok := ss.states[addr]; ok {
+		// We've already registered an error. Since we use connections concurrently
+		// we want to avoid double backing-off (and double retrying) here.
+		switch st.retry {
+		case retryWait:
+			// waiting for retry to be scheduled
+			return
+		case retryReady:
+			// scheduled, waiting to be picked
+			return
+		case retryRunning:
+			// backoff: we're here because we hit an error during the retry
+			ws = st
+			ws.wait = backoff(ws.wait)
+			ws.retry = retryWait
+		default:
+			panic(fmt.Errorf("unexpected retry state: %q", st.retry))
+		}
+	}
+	ss.setState(addr, ws)
+
+	if ws.retry == retryWait {
+		go ss.scheduleRetry(addr, ws.wait)
+	}
+}
+
+func backoff(wait time.Duration) time.Duration {
+	// retries with jitter: grows by [1.5, 2) each time
+	newWait := time.Duration(float64(wait) * (1.5 + rand.Float64() * 0.5))
+	if newWait > maxRetryWait {
+		return maxRetryWait
+	}
+	return newWait
+}
+
+// Sets the retry state for an address, and updates the available list.
+// MUST be called from a method with a lock on the mutex, or will cause concurrent map crashes
+func (ss *ServerList) setState(addr net.Addr, ws waitState) {
+	if ss.states == nil {
+		ss.states = map[net.Addr]waitState{}
+	}
+	ss.states[addr] = ws
+	ss.filterAvailable()
+}
+
+// MUST be called from a method with a lock on the mutex, or will cause concurrent map crashes
+func (ss *ServerList) deleteState(addr net.Addr) {
+	delete(ss.states, addr)
+	ss.filterAvailable()
+}
+
+// MUST be called from a method with a lock on the mutex
+func (ss *ServerList) filterAvailable() {
+	// start with nothing available, and add available servers (with duplicates for balancing)
+	ss.available = ss.available[:0]
+	for _, addr := range ss.addrs {
+		if ws, ok := ss.states[addr]; !ok || ws.retry == retryReady {
+			ss.available = append(ss.available, addr)
+		}
+	}
+}
+
+// is a network error, rather than a protocol level error like ErrCacheMiss
+func isConnectionError(err error) bool {
+	var netErr net.Error
+	return errors.As(err, &netErr) || errors.Is(err, io.EOF)
+}
+
+func (ss *ServerList) scheduleRetry(addr net.Addr, wait time.Duration) {
+	time.Sleep(wait)
+
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+	ws, ok := ss.states[addr]
+	if !ok {
+		// recovered while routine was sleeping
+		return
+	}
+	// Sometimes we'll end up here not in retryWait because of concurrent operations:
+	//
+	// 1. error and retry (1) scheduled
+	//    1.1. scheduleRetry(A) start waiting
+	// 2. recover
+	// 3. error, and retry (B) scheduled
+	// 4. scheduledRetry(A) wakes up, and sets us in retryReady
+	// 5. scheduledRetry(B) wakes up, and sees we're in retryReady
+	//
+	// We could end up in retryRunning too: 4 and 5 would be reversed if 1) used a long wait (e.g was a backoff
+	// after many retries): B wakes up first after its shorter wait, schedules retry, and then the address is picked
+	// and the retry is run before A wakes up
+	if ws.retry != retryWait {
+		return
+	}
+	// schedule a retry
+	ws.retry = retryReady
+	ss.setState(addr, ws)
 }

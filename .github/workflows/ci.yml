@@ -1,0 +1,62 @@
+on:
+  push:
+  pull_request:
+
+
+name: run tests
+jobs:
+  vet:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Install Go
+      uses: actions/setup-go@v2
+      with:
+        go-version: 1.15.x
+    - name: Checkout code
+      uses: actions/checkout@v2
+    - name: Run vet
+      run: go vet -c=3 ./...
+
+  test:
+    strategy:
+      matrix:
+        go-version: [1.13.x, 1.14.x, 1.15.x]
+        platform: [ubuntu-latest]
+    runs-on: ${{ matrix.platform }}
+    steps:
+    - name: Install Go
+      uses: actions/setup-go@v2
+      with:
+        go-version: ${{ matrix.go-version }}
+    - name: Checkout code
+      uses: actions/checkout@v2
+    - name: Install memcache
+      run: sudo apt-get install memcached
+    - name: Run memcache
+      run: memcached -d
+    - name: Run tests
+      run: go test -v -race ./...
+
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Install Go
+      uses: actions/setup-go@v2
+      with:
+        go-version: 1.15.x
+    - name: Install memcache
+      run: sudo apt-get install memcached
+    - name: Checkout code
+      uses: actions/checkout@v2
+    - name: Run memcache
+      run: memcached -d
+    - name: Calc coverage
+      run: |
+        go test -v -covermode=count -coverprofile=coverage.out ./...
+    - name: Convert coverage.out to coverage.lcov
+      uses: jandelgado/gcov2lcov-action@v1.0.6
+    - name: Coveralls
+      uses: coverallsapp/github-action@v1.1.2
+      with:
+          github-token: ${{ secrets.github_token }}
+          path-to-lcov: coverage.lcov

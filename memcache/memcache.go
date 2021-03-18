@@ -48,7 +48,7 @@ var (
 	// CompareAndSwap) failed because the condition was not satisfied.
 	ErrNotStored = errors.New("memcache: item not stored")
 
-	// ErrServer means that a server error occurred.
+	// ErrServerError means that a server error occurred.
 	ErrServerError = errors.New("memcache: server error")
 
 	// ErrNoStats means that no statistics were available.
@@ -117,11 +117,20 @@ var (
 
 // New returns a memcache client using the provided server(s)
 // with equal weight. If a server is listed multiple times,
-// it gets a proportional amount of weight.
+// it gets a proportional amount of weight. After network errors
+// circuit-breaking logic will route requests to other servers if
+// available, or will start returning ErrNoServers if all servers are
+// unavailable.
+//
+// Note: if there is an err in the initial resolution this
+// client will fail all calls with ErrNoServers (until SetServers is called
+// again with new servers that do resolve). This matches the
+// behaviour at the point the library was forked (https://github.com/bradfitz/gomemcache/blob/a41fca850d0b6f392931a78cbae438803ea0b886/memcache/memcache.go#L124)
 func New(server ...string) *Client {
-	ss := new(ServerList)
-	ss.SetServers(server...)
-	return NewFromSelector(ss)
+	sel := &ServerList{}
+	// ignore original dial errors - see comment above
+	sel.SetServers(server...)
+	return NewFromSelector(sel)
 }
 
 // NewFromSelector returns a new Client using the provided ServerSelector.
@@ -195,8 +204,10 @@ func (cn *conn) extendDeadline() {
 func (cn *conn) condRelease(err *error) {
 	if *err == nil || resumableError(*err) {
 		cn.release()
+		cn.c.selector.OnResult(cn.addr, nil)
 	} else {
 		cn.nc.Close()
+		cn.c.selector.OnResult(cn.addr, *err)
 	}
 }
 
@@ -299,6 +310,7 @@ func (c *Client) onItem(item *Item, fn func(*Client, *bufio.ReadWriter, *Item) e
 	}
 	cn, err := c.getConn(addr)
 	if err != nil {
+		c.selector.OnResult(addr, err)
 		return err
 	}
 	defer cn.condRelease(&err)
@@ -308,6 +320,7 @@ func (c *Client) onItem(item *Item, fn func(*Client, *bufio.ReadWriter, *Item) e
 	return nil
 }
 
+// FlushAll sends flush command to all servers
 func (c *Client) FlushAll() error {
 	return c.selector.Each(c.flushAllFromAddr)
 }
@@ -349,6 +362,7 @@ func (c *Client) withKeyAddr(key string, fn func(net.Addr) error) (err error) {
 func (c *Client) withAddrRw(addr net.Addr, fn func(*bufio.ReadWriter) error) (err error) {
 	cn, err := c.getConn(addr)
 	if err != nil {
+		c.selector.OnResult(addr, err)
 		return err
 	}
 	defer cn.condRelease(&err)

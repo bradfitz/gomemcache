@@ -3,6 +3,14 @@
 This is a memcache client library for the Go programming language
 (http://golang.org/).
 
+[![Coverage Status](https://coveralls.io/repos/github/timruffles/gomemcache/badge.svg?branch=master)](https://coveralls.io/github/timruffles/gomemcache?branch=master)
+
+### Fork notes
+
+This was forked from the original to add circuit-breaking. ServerSelector.OnResult was added as a hook for the circuit-breaking logic,
+and the ServerList learned how to circuit break on network errors. Servers will be removed from circulation and retried
+with expoential backoff.
+
 ## Installing
 
 ### Using *go get*
