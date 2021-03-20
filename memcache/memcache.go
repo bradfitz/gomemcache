@@ -491,6 +491,19 @@ func (c *Client) GetMulti(keys []string) (map[string]*Item, error) {
 	return m, err
 }
 
+// GetMultiByAddr, caller have to be sure that all keys placed on one server
+// In method skipped keys validation
+func (c *Client) GetMultiByAddr(addr net.Addr, keys []string) (map[string]*Item, error) {
+	m := make(map[string]*Item)
+	addItemToMap := func(it *Item) {
+		m[it.Key] = it
+	}
+
+	err := c.getFromAddr(addr, keys, addItemToMap)
+
+	return m, err
+}
+
 // parseGetResponse reads a GET response from r and calls cb for each
 // read and allocated Item
 func parseGetResponse(r *bufio.Reader, cb func(*Item)) error {
