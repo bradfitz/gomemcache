@@ -560,6 +560,8 @@ func (c *Client) set(rw *bufio.ReadWriter, item *Item) error {
 	return c.populateOne(rw, "set", item)
 }
 
+// SetMulti is a batch version of Set. It uses experimental Meta
+// commands, which may changes.
 func (c *Client) SetMulti(_ context.Context, items []*Item) error {
 	itemsMap := make(map[net.Addr][]*Item)
 	for _, item := range items {
@@ -691,21 +693,21 @@ func (c *Client) setMany(addr net.Addr, items []*Item) error {
 			return err
 		}
 
-		return parseMultiSetResponse(rw)
+		return parseMetaCommandResponse(rw)
 	})
 }
 
-func parseMultiSetResponse(rw *bufio.ReadWriter) error {
+func parseMetaCommandResponse(rw *bufio.ReadWriter) error {
 	for {
 		line, err := rw.ReadSlice('\n')
 		if err != nil {
 			return err
 		}
 		switch {
-		case bytes.Equal(line, resultNotStored):
-			err = ErrNotStored
 		case bytes.Equal(line, []byte("MN\r\n")):
 			return err
+		case bytes.Equal(line, resultNotStored):
+			err = ErrNotStored
 		default:
 			err = fmt.Errorf("unexpected line %s", line)
 		}
@@ -749,6 +751,62 @@ func writeExpectf(rw *bufio.ReadWriter, expect []byte, format string, args ...in
 func (c *Client) Delete(key string) error {
 	return c.withKeyRw(key, func(rw *bufio.ReadWriter) error {
 		return writeExpectf(rw, resultDeleted, "delete %s\r\n", key)
+	})
+}
+
+// DeleteMulti is a batch version of Delete. It uses experimental Meta
+// commands, which may changes.
+func (c *Client) DeleteMulti(keys []string) error {
+	keysMap := make(map[net.Addr][]string)
+
+	for _, key := range keys {
+		if !legalKey(key) {
+			return ErrMalformedKey
+		}
+
+		addr, err := c.selector.PickServer(key)
+		if err != nil {
+			return err
+		}
+
+		keysMap[addr] = append(keysMap[addr], key)
+	}
+
+	ch := make(chan error, buffered)
+	for addr, keys := range keysMap {
+		go func(addr net.Addr, keys []string) {
+			ch <- c.deleteMany(addr, keys)
+		}(addr, keys)
+	}
+
+	var responseErr error
+	for _ = range keysMap {
+		if ge := <-ch; ge != nil {
+			responseErr = ge
+		}
+	}
+
+	return responseErr
+}
+
+func (c *Client) deleteMany(addr net.Addr, keys []string) error {
+	return c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
+		for _, key := range keys {
+			_, err := fmt.Fprintf(rw, "md %s q\r\n", key) // meta delete with "no reply"
+			if err != nil {
+				return err
+			}
+		}
+		_, err := rw.Write(mn)
+		if err != nil {
+			return err
+		}
+		err = rw.Flush()
+		if err != nil {
+			return err
+		}
+
+		return parseMetaCommandResponse(rw)
 	})
 }
 

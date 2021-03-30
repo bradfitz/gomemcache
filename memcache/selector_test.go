@@ -1,3 +1,5 @@
+// +build !integration
+
 /*
 Copyright 2014 Google Inc.
 

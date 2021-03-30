@@ -1,22 +1,25 @@
 ## About
 
-This is a memcache client library for the Go programming language
+This is a fork of memcache client library for the Go programming language
 (http://golang.org/).
+
+This fork adds new multicommands based on the new metaprotocol
+(https://github.com/memcached/memcached/wiki/MetaCommands).
 
 ## Installing
 
 ### Using *go get*
 
-    $ go get github.com/bradfitz/gomemcache/memcache
+    $ go get github.com/bobrovde/gomemcache/memcache
 
 After this command *gomemcache* is ready to use. Its source will be in:
 
-    $GOPATH/src/github.com/bradfitz/gomemcache/memcache
+    $GOPATH/src/github.com/bobrovde/gomemcache/memcache
 
 ## Example
 
     import (
-            "github.com/bradfitz/gomemcache/memcache"
+            "github.com/bobrovde/gomemcache/memcache"
     )
 
     func main() {
