@@ -317,8 +317,17 @@ func (c *Client) FlushAll() error {
 // memcache cache miss. The key must be at most 250 bytes in length.
 func (c *Client) Get(key string) (item *Item, err error) {
 	err = c.withKeyAddr(key, func(addr net.Addr) error {
-		return c.getFromAddr(addr, []string{key}, func(it *Item) { item = it })
+		var err error
+		item, err = c.GetByAddr(addr, key)
+		return err
 	})
+	return
+}
+
+// Get, caller have to be sure that all keys placed on one server
+// In method skipped keys validation
+func (c *Client) GetByAddr(addr net.Addr, key string) (item *Item, err error) {
+	err = c.getFromAddr(addr, []string{key}, func(it *Item) { item = it })
 	if err == nil && item == nil {
 		err = ErrCacheMiss
 	}
