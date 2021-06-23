@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"strconv"
 	"strings"
@@ -61,6 +62,17 @@ var (
 
 	// ErrNoServers is returned when no servers are configured or available.
 	ErrNoServers = errors.New("memcache: no servers configured or available")
+
+	typeErrorInt    = errors.New("unexpected type (expected int)")
+	typeErrorUint32 = errors.New("unexpected type (expected uint32)")
+	typeErrorUint64 = errors.New("unexpected type (expected uint64)")
+
+	unexpectedSuffixError = errors.New("unexpected suffix")
+	expectedSpaceError    = errors.New("expected space")
+	keyIsEmptyError       = errors.New("key is empty")
+
+	integerStrLen = len(strconv.Itoa(math.MaxInt64)) + 2
+	suffixGetCall = []byte("VALUE ")
 )
 
 const (
@@ -100,7 +112,7 @@ func legalKey(key string) bool {
 
 var (
 	crlf            = []byte("\r\n")
-	space           = []byte(" ")
+	space           = byte(' ')
 	mn              = []byte("mn\r\n")
 	resultOK        = []byte("OK\r\n")
 	resultStored    = []byte("STORED\r\n")
@@ -547,17 +559,118 @@ func parseGetResponse(r *bufio.Reader, cb func(*Item)) error {
 // scanGetResponseLine populates it and returns the declared size of the item.
 // It does not read the bytes of the item.
 func scanGetResponseLine(line []byte, it *Item) (size int, err error) {
-	pattern := "VALUE %s %d %d %d\r\n"
-	dest := []interface{}{&it.Key, &it.Flags, &size, &it.casid}
-	if bytes.Count(line, space) == 3 {
-		pattern = "VALUE %s %d %d\r\n"
-		dest = dest[:3]
+	currPos := 0
+	if currPos, err = validateSuffix(line); err != nil {
+		return
 	}
-	n, err := fmt.Sscanf(string(line), pattern, dest...)
-	if err != nil || n != len(dest) {
-		return -1, fmt.Errorf("memcache: unexpected line in get response: %q", line)
+	if it.Key, currPos, err = scanWord(line, currPos); err != nil {
+		return
+	}
+	if currPos, err = scanSpace(line, currPos); err != nil {
+		return
+	}
+	if it.Flags, currPos, err = scanUint32(line, currPos); err != nil {
+		return
+	}
+	if currPos, err = scanSpace(line, currPos); err != nil {
+		return
+	}
+	if size, currPos, err = scanInt(line, currPos); err != nil {
+		return
+	}
+	if currPos < len(line) {
+		if currPos, err = scanSpace(line, currPos); err != nil {
+			return
+		}
+		if it.casid, currPos, err = scanUint64(line, currPos); err != nil {
+			return
+		}
 	}
 	return size, nil
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func validateSuffix(line []byte) (lastIndexByte int, err error) {
+	if len(line) < len(suffixGetCall) {
+		return 0, unexpectedSuffixError
+	}
+	for i, s := range suffixGetCall {
+		if line[i] != s {
+			return 0, unexpectedSuffixError
+		}
+	}
+	return len(suffixGetCall), nil
+}
+
+func scanWord(data []byte, iStart int) (res string, lastIndexByte int, err error) {
+	iCurr := iStart
+	for ; iCurr < len(data) && data[iCurr] != space; iCurr++ {
+	}
+	if iCurr == iStart {
+		return "", 0, keyIsEmptyError
+	}
+	return string(data[iStart:iCurr]), iCurr, nil
+}
+
+func scanInt(data []byte, iStart int) (res int, lastIndexByte int, err error) {
+	var currDestRes int
+	iCurr := iStart
+	for ; iCurr < min(len(data), iStart+integerStrLen); iCurr++ {
+		currByte := data[iCurr]
+		if currByte < '0' || '9' < currByte {
+			break
+		}
+		currDestRes = currDestRes*10 + int(currByte-'0')
+	}
+	if iCurr == iStart {
+		return 0, 0, typeErrorInt
+	}
+	return currDestRes, iCurr, nil
+}
+
+func scanUint32(data []byte, iStart int) (res uint32, lastIndexByte int, err error) {
+	var currDestRes uint32
+	iCurr := iStart
+	for ; iCurr < min(len(data), iStart+integerStrLen); iCurr++ {
+		currByte := data[iCurr]
+		if currByte < '0' || '9' < currByte {
+			break
+		}
+		currDestRes = currDestRes*10 + uint32(currByte-'0')
+	}
+	if iCurr == iStart {
+		return 0, 0, typeErrorUint32
+	}
+	return currDestRes, iCurr, nil
+}
+
+func scanUint64(data []byte, iStart int) (res uint64, lastIndexByte int, err error) {
+	var currDestRes uint64
+	iCurr := iStart
+	for ; iCurr < min(len(data), iStart+integerStrLen); iCurr++ {
+		currByte := data[iCurr]
+		if currByte < '0' || '9' < currByte {
+			break
+		}
+		currDestRes = currDestRes*10 + uint64(currByte-'0')
+	}
+	if iCurr == iStart {
+		return 0, 0, typeErrorUint64
+	}
+	return currDestRes, iCurr, nil
+}
+
+func scanSpace(data []byte, iStart int) (lastIndexByte int, err error) {
+	if iStart >= len(data) || data[iStart] != space {
+		return 0, expectedSpaceError
+	}
+	return iStart + 1, nil
 }
 
 // Set writes the given item, unconditionally.
