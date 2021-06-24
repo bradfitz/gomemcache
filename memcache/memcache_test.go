@@ -25,12 +25,15 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"math"
 	"net"
 	"os"
 	"os/exec"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 const testServer = "localhost:11211"
@@ -295,4 +298,96 @@ func BenchmarkOnItem(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		c.onItem(&item, dummyFn)
 	}
+}
+
+func TestScanGetResponseLine(t *testing.T) {
+	t.Run("Valid input", func(t *testing.T) {
+		for _, expectedFlags := range []uint32{0, 1, 2, math.MaxUint32 / 3, math.MaxUint32 / 2, math.MaxUint32 - 1, math.MaxUint32} {
+			for _, expectedSize := range []int{0, 1, 2, math.MaxInt32 / 3, math.MaxInt32 / 2, math.MaxInt32 - 1, math.MaxInt32} {
+				for _, expectedCasid := range []uint64{0, 1, 2, math.MaxUint64 / 3, math.MaxUint64 / 2, math.MaxUint64 - 1, math.MaxUint64} {
+					expectedKey := "_213_QwErTy"
+					{
+						tmpItem := &Item{}
+						line := []byte(fmt.Sprintf("VALUE %s %d %d %d", expectedKey, expectedFlags, expectedSize, expectedCasid))
+
+						size, err := scanGetResponseLine(line, tmpItem)
+						assert.Nil(t, err)
+						assert.Equal(t, expectedFlags, tmpItem.Flags)
+						assert.Equal(t, expectedSize, size)
+						assert.Equal(t, expectedCasid, tmpItem.casid)
+						assert.Equal(t, expectedKey, tmpItem.Key)
+					}
+					{
+						tmpItem := &Item{}
+						line := []byte(fmt.Sprintf("VALUE %s %d %d", expectedKey, expectedFlags, expectedSize))
+
+						size, err := scanGetResponseLine(line, tmpItem)
+						assert.Nil(t, err)
+						assert.Equal(t, expectedFlags, tmpItem.Flags)
+						assert.Equal(t, expectedSize, size)
+						assert.Equal(t, expectedKey, tmpItem.Key)
+					}
+				}
+			}
+		}
+	})
+
+	t.Run("Invalid input", func(t *testing.T) {
+		tmpItem := &Item{}
+		t.Run("Invalid suffix", func(t *testing.T) {
+			line := []byte("VaLUE ")
+
+			_, err := scanGetResponseLine(line, tmpItem)
+			assert.Equal(t, unexpectedSuffixError, err)
+		})
+		t.Run("Invalid key", func(t *testing.T) {
+			line := []byte("VALUE  ")
+
+			_, err := scanGetResponseLine(line, tmpItem)
+			assert.Equal(t, keyIsEmptyError, err)
+		})
+		t.Run("Invalid flags", func(t *testing.T) {
+			line := []byte("VALUE _123_Q b")
+
+			_, err := scanGetResponseLine(line, tmpItem)
+			assert.Equal(t, typeErrorUint32, err)
+		})
+		t.Run("Invalid size", func(t *testing.T) {
+			line := []byte("VALUE _123_Q 1 l")
+
+			_, err := scanGetResponseLine(line, tmpItem)
+			assert.Equal(t, typeErrorInt, err)
+		})
+		t.Run("Invalid casid", func(t *testing.T) {
+			line := []byte("VALUE _123_Q 1 2 y")
+
+			_, err := scanGetResponseLine(line, tmpItem)
+			assert.Equal(t, typeErrorUint64, err)
+		})
+		t.Run("Expected delimiter", func(t *testing.T) {
+			t.Run("After key", func(t *testing.T) {
+				line := []byte("VALUE _123_Q")
+
+				_, err := scanGetResponseLine(line, tmpItem)
+				assert.Equal(t, expectedSpaceError, err)
+			})
+			t.Run("After flag", func(t *testing.T) {
+				line := []byte("VALUE _123_Q 1")
+
+				_, err := scanGetResponseLine(line, tmpItem)
+				assert.Equal(t, expectedSpaceError, err)
+
+				line = []byte("VALUE _123_Q 1x")
+
+				_, err = scanGetResponseLine(line, tmpItem)
+				assert.Equal(t, expectedSpaceError, err)
+			})
+			t.Run("After size", func(t *testing.T) {
+				line := []byte("VALUE _123_Q 1 2x")
+
+				_, err := scanGetResponseLine(line, tmpItem)
+				assert.Equal(t, expectedSpaceError, err)
+			})
+		})
+	})
 }
