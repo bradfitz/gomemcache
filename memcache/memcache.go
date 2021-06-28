@@ -200,6 +200,17 @@ func (cn *conn) condRelease(err *error) {
 	}
 }
 
+// Close is a method to go interate all connection to finish
+func (c *Client) Close() {
+	c.selector.Each(func(addr net.Addr) error {
+		cn, ok := c.getFreeConn(addr)
+		if ok {
+			cn.nc.Close()
+		}
+		return nil
+	})
+}
+
 func (c *Client) putFreeConn(addr net.Addr, cn *conn) {
 	c.lk.Lock()
 	defer c.lk.Unlock()
