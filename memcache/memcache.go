@@ -363,7 +363,7 @@ func (c *Client) withKeyRw(key string, fn func(*bufio.ReadWriter) error) error {
 
 func (c *Client) getFromAddr(addr net.Addr, keys []string, cb func(*Item)) error {
 	return c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
-		if _, err := fmt.Fprintf(rw, "gets %s\r\n", strings.Join(keys, " ")); err != nil {
+		if _, err := fmt.Fprintf(rw, "get %s\r\n", strings.Join(keys, " ")); err != nil {
 			return err
 		}
 		if err := rw.Flush(); err != nil {
