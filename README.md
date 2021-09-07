@@ -1,7 +1,5 @@
 ## About
-
-This is a memcache client library for the Go programming language
-(http://golang.org/).
+This is a [memcache](https://memcached.org/) client library for the [Go programming language](http://golang.org/).
 
 
 ## Features
