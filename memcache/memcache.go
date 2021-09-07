@@ -126,7 +126,10 @@ func New(server ...string) *Client {
 
 // NewFromSelector returns a new Client using the provided ServerSelector.
 func NewFromSelector(ss ServerSelector) *Client {
-	return &Client{selector: ss}
+	return &Client{
+		selector:          ss,
+		GetMultiSupported: true,
+	}
 }
 
 // Client is a memcache client.
@@ -143,6 +146,12 @@ type Client struct {
 	// Consider your expected traffic rates and latency carefully. This should
 	// be set to a number higher than your peak parallel requests.
 	MaxIdleConns int
+
+	// Base memcached supports fetching multiple keys with gets command
+	// default: true
+	// However scalable facebook/mcrouter does not, so if this is false,
+	// GetMulti() will fallback to separate Get() operations (slower)
+	GetMultiSupported bool
 
 	selector ServerSelector
 
@@ -316,12 +325,42 @@ func (c *Client) FlushAll() error {
 // memcache cache miss. The key must be at most 250 bytes in length.
 func (c *Client) Get(key string) (item *Item, err error) {
 	err = c.withKeyAddr(key, func(addr net.Addr) error {
-		return c.getFromAddr(addr, []string{key}, func(it *Item) { item = it })
+		return c.getOneFromAddr(addr, key, func(it *Item) { item = it })
 	})
 	if err == nil && item == nil {
 		err = ErrCacheMiss
 	}
 	return
+}
+
+func (c *Client) getOneFromAddr(addr net.Addr, key string, cb func(*Item)) error {
+	return c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
+		if _, err := fmt.Fprintf(rw, "get %s\r\n", key); err != nil {
+			return err
+		}
+		if err := rw.Flush(); err != nil {
+			return err
+		}
+		if err := parseGetResponse(rw.Reader, cb); err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
+func (c *Client) getMultiFromAddr(addr net.Addr, keys []string, cb func(*Item)) error {
+	return c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
+		if _, err := fmt.Fprintf(rw, "gets %s\r\n", strings.Join(keys, " ")); err != nil {
+			return err
+		}
+		if err := rw.Flush(); err != nil {
+			return err
+		}
+		if err := parseGetResponse(rw.Reader, cb); err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
 // Touch updates the expiry for the given key. The seconds parameter is either
@@ -358,21 +397,6 @@ func (c *Client) withAddrRw(addr net.Addr, fn func(*bufio.ReadWriter) error) (er
 func (c *Client) withKeyRw(key string, fn func(*bufio.ReadWriter) error) error {
 	return c.withKeyAddr(key, func(addr net.Addr) error {
 		return c.withAddrRw(addr, fn)
-	})
-}
-
-func (c *Client) getFromAddr(addr net.Addr, keys []string, cb func(*Item)) error {
-	return c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
-		if _, err := fmt.Fprintf(rw, "get %s\r\n", strings.Join(keys, " ")); err != nil {
-			return err
-		}
-		if err := rw.Flush(); err != nil {
-			return err
-		}
-		if err := parseGetResponse(rw.Reader, cb); err != nil {
-			return err
-		}
-		return nil
 	})
 }
 
@@ -476,9 +500,20 @@ func (c *Client) GetMulti(keys []string) (map[string]*Item, error) {
 
 	ch := make(chan error, buffered)
 	for addr, keys := range keyMap {
-		go func(addr net.Addr, keys []string) {
-			ch <- c.getFromAddr(addr, keys, addItemToMap)
-		}(addr, keys)
+
+		if c.GetMultiSupported == false {
+			// TODO NEEDS TESTING
+			for _, key := range keys {
+				go func(addr net.Addr, key string) {
+					ch <- c.getOneFromAddr(addr, key, addItemToMap)
+				}(addr, key)
+			}
+		} else {
+			// default behaviour
+			go func(addr net.Addr, keys []string) {
+				ch <- c.getMultiFromAddr(addr, keys, addItemToMap)
+			}(addr, keys)
+		}
 	}
 
 	var err error
