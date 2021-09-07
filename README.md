@@ -11,7 +11,9 @@ This is a memcache client library for the Go programming language
 
 ### Using *go get*
 
-    $ go get github.com/bradfitz/gomemcache/memcache
+```bash
+go get github.com/bradfitz/gomemcache/memcache
+```
 
 After this command *gomemcache* is ready to use. Its source will be in:
 
@@ -36,10 +38,14 @@ See https://godoc.org/github.com/bradfitz/gomemcache/memcache
 
 Or run:
 
-    $ godoc github.com/bradfitz/gomemcache/memcache
+```bash
+godoc github.com/bradfitz/gomemcache/memcache
+```
 
 ## Development
 If you fork the lib, you're likely to have problem using it in your project. For that, use something like:
 
-    $ go mod edit -replace="github.com/bradfitz/gomemcache=github.com/xxxxxxxx/gomemcache"
-    $ go mod tidy
+```bash
+go mod edit -replace="github.com/bradfitz/gomemcache=github.com/xxxxxxxx/gomemcache"
+go mod tidy
+```
