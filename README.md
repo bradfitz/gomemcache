@@ -3,7 +3,7 @@
 This is a memcache client library for the Go programming language
 (http://golang.org/).
 
-Current fork difference is that it supports [facebook/mcrouter](https://github.com/facebook/mcrouter) instead of regular memcache
+*Current fork difference is that it supports [facebook/mcrouter](https://github.com/facebook/mcrouter) instead of regular memcache*
 
 ## Installing
 
