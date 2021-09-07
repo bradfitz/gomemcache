@@ -47,3 +47,9 @@ If you fork the lib, you're likely to have problem using it in your project. For
 go mod edit -replace="github.com/bradfitz/gomemcache=github.com/xxxxxxxx/gomemcache"
 go mod tidy
 ```
+
+## Testing
+Tests require memcache server to run on localhost
+```
+go test
+```
