@@ -18,19 +18,19 @@ After this command *gomemcache* is ready to use. Its source will be in:
     $GOPATH/src/github.com/bradfitz/gomemcache/memcache
 
 ## Example
+```go
+import (
+        "github.com/bradfitz/gomemcache/memcache"
+)
 
-    import (
-            "github.com/bradfitz/gomemcache/memcache"
-    )
+func main() {
+     mc := memcache.New("10.0.0.1:11211", "10.0.0.2:11211", "10.0.0.3:11212")
+     mc.Set(&memcache.Item{Key: "foo", Value: []byte("my value")})
 
-    func main() {
-         mc := memcache.New("10.0.0.1:11211", "10.0.0.2:11211", "10.0.0.3:11212")
-         mc.Set(&memcache.Item{Key: "foo", Value: []byte("my value")})
-
-         it, err := mc.Get("foo")
-         ...
-    }
-
+     it, err := mc.Get("foo")
+     ...
+}
+```
 ## API docs
 See https://godoc.org/github.com/bradfitz/gomemcache/memcache
 
