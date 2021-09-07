@@ -54,10 +54,37 @@ func TestLocalhostMcrouter(t *testing.T) {
 	if !setup(t, testMcrouterServer) {
 		return
 	}
-	server := New(testMcrouterServer)
-	server.GetMultiSupported = false
+	c := New(testMcrouterServer)
+	c.GetMultiSupported = false
 
-	testWithClient(t, server)
+	checkErr := func(err error, format string, args ...interface{}) {
+		if err != nil {
+			t.Fatalf(format, args...)
+		}
+	}
+
+	t.Run("GetMulti", func(t *testing.T) {
+		_ = c.Add(&Item{Key: "foo", Value: []byte("fooval")})
+		_ = c.Add(&Item{Key: "bar", Value: []byte("barval")})
+
+		m, err := c.GetMulti([]string{"foo", "bar"})
+		checkErr(err, "GetMulti: %v", err)
+		if g, e := len(m), 2; g != e {
+			t.Errorf("GetMulti: got len(map) = %d, want = %d", g, e)
+		}
+		if _, ok := m["foo"]; !ok {
+			t.Fatalf("GetMulti: didn't get key 'foo'")
+		}
+		if _, ok := m["bar"]; !ok {
+			t.Fatalf("GetMulti: didn't get key 'bar'")
+		}
+		if g, e := string(m["foo"].Value), "fooval"; g != e {
+			t.Errorf("GetMulti: foo: got %q, want %q", g, e)
+		}
+		if g, e := string(m["bar"].Value), "barval"; g != e {
+			t.Errorf("GetMulti: bar: got %q, want %q", g, e)
+		}
+	})
 }
 
 // Run the memcached binary as a child process and connect to its unix socket.
@@ -168,9 +195,6 @@ func testWithClient(t *testing.T, c *Client) {
 	})
 
 	t.Run("GetMulti", func(t *testing.T) {
-		_ = c.Add(&Item{Key: "foo", Value: []byte("fooval")})
-		_ = c.Add(&Item{Key: "bar", Value: []byte("barval")})
-
 		m, err := c.GetMulti([]string{"foo", "bar"})
 		checkErr(err, "GetMulti: %v", err)
 		if g, e := len(m), 2; g != e {
