@@ -31,11 +31,12 @@ import (
 )
 
 const testServer = "localhost:11211"
+const testMcrouterServer = "localhost:11211"
 
-func setup(t *testing.T) bool {
-	c, err := net.Dial("tcp", testServer)
+func setup(t *testing.T, address string) bool {
+	c, err := net.Dial("tcp", address)
 	if err != nil {
-		t.Fatalf("no server running at %s", testServer)
+		t.Fatalf("no server running at %s", address)
 	}
 	c.Write([]byte("flush_all\r\n"))
 	c.Close()
@@ -43,10 +44,20 @@ func setup(t *testing.T) bool {
 }
 
 func TestLocalhost(t *testing.T) {
-	if !setup(t) {
+	if !setup(t, testServer) {
 		return
 	}
 	testWithClient(t, New(testServer))
+}
+
+func TestLocalhostMcrouter(t *testing.T) {
+	if !setup(t, testMcrouterServer) {
+		return
+	}
+	server := New(testMcrouterServer)
+	server.GetMultiSupported = false
+
+	testWithClient(t, server)
 }
 
 // Run the memcached binary as a child process and connect to its unix socket.
@@ -157,6 +168,9 @@ func testWithClient(t *testing.T, c *Client) {
 	})
 
 	t.Run("GetMulti", func(t *testing.T) {
+		_ = c.Add(&Item{Key: "foo", Value: []byte("fooval")})
+		_ = c.Add(&Item{Key: "bar", Value: []byte("barval")})
+
 		m, err := c.GetMulti([]string{"foo", "bar"})
 		checkErr(err, "GetMulti: %v", err)
 		if g, e := len(m), 2; g != e {

@@ -500,16 +500,11 @@ func (c *Client) GetMulti(keys []string) (map[string]*Item, error) {
 
 	ch := make(chan error, buffered)
 	for addr, keys := range keyMap {
-
 		if c.GetMultiSupported == false {
-			// TODO NEEDS TESTING
 			for _, key := range keys {
-				go func(addr net.Addr, key string) {
-					ch <- c.getOneFromAddr(addr, key, addItemToMap)
-				}(addr, key)
+				ch <- c.getOneFromAddr(addr, key, addItemToMap)
 			}
 		} else {
-			// default behaviour
 			go func(addr net.Addr, keys []string) {
 				ch <- c.getMultiFromAddr(addr, keys, addItemToMap)
 			}(addr, keys)
