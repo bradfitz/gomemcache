@@ -1,9 +1,5 @@
-## About
+# gomemcache
 This is a [memcache](https://memcached.org/) client library for the [Go programming language](http://golang.org/).
-
-
-## Features
-- supports [facebook/mcrouter](https://github.com/facebook/mcrouter) instead of regular memcache
 
 ## Installing
 
