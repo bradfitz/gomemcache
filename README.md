@@ -3,14 +3,15 @@
 This is a memcache client library for the Go programming language
 (http://golang.org/).
 
-*Current fork difference is that it supports [facebook/mcrouter](https://github.com/facebook/mcrouter) instead of regular memcache*
+
+## Features
+- supports [facebook/mcrouter](https://github.com/facebook/mcrouter) instead of regular memcache
 
 ## Installing
 
 ### Using *go get*
 
     $ go get github.com/bradfitz/gomemcache/memcache
-    $ go mod edit -replace="github.com/bradfitz/gomemcache=github.com/tot-ra/gomemcache@v1.0.0"
 
 After this command *gomemcache* is ready to use. Its source will be in:
 
@@ -30,11 +31,13 @@ After this command *gomemcache* is ready to use. Its source will be in:
          ...
     }
 
-## Full docs, see:
-
+## API docs
 See https://godoc.org/github.com/bradfitz/gomemcache/memcache
 
 Or run:
 
     $ godoc github.com/bradfitz/gomemcache/memcache
 
+## Development
+If you fork the lib, you're likely to have problem using it in your project. For that, use something like:
+    $ go mod edit -replace="github.com/bradfitz/gomemcache=github.com/xxxxxxxx/gomemcache"
