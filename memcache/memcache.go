@@ -24,11 +24,12 @@ import (
 	"fmt"
 	"io"
 	"net"
-
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/bradfitz/gomemcache/memcache/pool"
 )
 
 // Similar to:
@@ -73,6 +74,11 @@ const (
 )
 
 const buffered = 8 // arbitrary buffered channel size, for readability
+
+// buffers keep track of all memcached Item value buffers.
+var buffers = pool.New(1e3, 1e6, 3, func(sz int) interface{} {
+	return make([]byte, 0, sz)
+})
 
 // resumableError returns true if err is only a protocol-level cache error.
 // This is used to determine whether or not a server connection should
@@ -169,6 +175,17 @@ type Item struct {
 
 	// Compare and swap ID.
 	casid uint64
+}
+
+// Close closes the memcached Item.
+// Returns underlying value buffer back into the pool.
+func (it *Item) Close() error {
+	if it.Value == nil {
+		return nil
+	}
+	buffers.Put(it.Value)
+	it.Value = nil
+	return nil
 }
 
 // conn is a connection to a server.
@@ -506,12 +523,16 @@ func parseGetResponse(r *bufio.Reader, cb func(*Item)) error {
 		if err != nil {
 			return err
 		}
-		it.Value = make([]byte, size+2)
-		_, err = io.ReadFull(r, it.Value)
+		buff := buffers.Get(size + 2).([]byte)
+		bw := bytes.NewBuffer(buff)
+
+		_, err = io.CopyN(bw, r, int64(size+2))
 		if err != nil {
-			it.Value = nil
+			buffers.Put(buff)
 			return err
 		}
+		it.Value = bw.Bytes()
+
 		if !bytes.HasSuffix(it.Value, crlf) {
 			it.Value = nil
 			return fmt.Errorf("memcache: corrupt get result read")

@@ -127,7 +127,7 @@ func testWithClient(t *testing.T, c *Client) {
 	if err != ErrMalformedKey {
 		t.Errorf("set(foo bar) should return ErrMalformedKey instead of %v", err)
 	}
-	malFormed = &Item{Key: "foo" + string(0x7f), Value: []byte("foobarval")}
+	malFormed = &Item{Key: "foo" + string([]byte{0x7f}), Value: []byte("foobarval")}
 	err = c.Set(malFormed)
 	if err != ErrMalformedKey {
 		t.Errorf("set(foo<0x7f>) should return ErrMalformedKey instead of %v", err)
@@ -289,4 +289,33 @@ func BenchmarkOnItem(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		c.onItem(&item, dummyFn)
 	}
+}
+
+func BenchmarkItemValuePool(b *testing.B) {
+	c := New(testServer)
+	val := make([]byte, 512)
+
+	b.Run("benchmark-no-buffer-reuse", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			k := fmt.Sprintf("foo-%d", i)
+			_ = c.Set(&Item{Key: k, Value: val})
+			it, _ := c.Get(k)
+			if it == nil {
+				b.Errorf("failed to get memcahed item")
+			}
+			// do not call Close, causing no item value buffer recycling
+		}
+	})
+	b.Run("benchmark-buffer-reuse", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			k := fmt.Sprintf("foo-%d", i)
+			_ = c.Set(&Item{Key: k, Value: val})
+			it, _ := c.Get(k)
+			if it == nil {
+				b.Errorf("failed to get memcahed item")
+			}
+			// put value buffer back to pool
+			_ = it.Close()
+		}
+	})
 }
