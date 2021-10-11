@@ -183,6 +183,7 @@ func (it *Item) Close() error {
 	if it.Value == nil {
 		return nil
 	}
+	it.Value = it.Value[:0]
 	buffers.Put(it.Value)
 	it.Value = nil
 	return nil
@@ -523,15 +524,16 @@ func parseGetResponse(r *bufio.Reader, cb func(*Item)) error {
 		if err != nil {
 			return err
 		}
-		buff := buffers.Get(size + 2).([]byte)
-		bw := bytes.NewBuffer(buff)
+		buffSz := size + 2
+		buff := buffers.Get(buffSz).([]byte)
+		buff = buff[:buffSz]
 
-		_, err = io.CopyN(bw, r, int64(size+2))
+		_, err = io.ReadAtLeast(r, buff, buffSz)
 		if err != nil {
 			buffers.Put(buff)
 			return err
 		}
-		it.Value = bw.Bytes()
+		it.Value = buff
 
 		if !bytes.HasSuffix(it.Value, crlf) {
 			it.Value = nil
