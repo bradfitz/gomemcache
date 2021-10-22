@@ -682,19 +682,12 @@ func (c *Client) set(rw *bufio.ReadWriter, item *Item) error {
 	return c.populateOne(rw, "set", item)
 }
 
-// SetMulti is a batch version of Set. It uses experimental Meta
-// commands, which may changes.
+// SetMulti is a batch version of Set
+// (memcached <= 1.6.9, uses experimental meta protocol)
 func (c *Client) SetMulti(_ context.Context, items []*Item) error {
-	itemsMap := make(map[net.Addr][]*Item)
-	for _, item := range items {
-		if !legalKey(item.Key) {
-			return ErrMalformedKey
-		}
-		addr, err := c.selector.PickServer(item.Key)
-		if err != nil {
-			return err
-		}
-		itemsMap[addr] = append(itemsMap[addr], item)
+	itemsMap, err := c.getItemsByServerMap(items)
+	if err != nil {
+		return nil
 	}
 
 	ch := make(chan error, buffered)
@@ -712,6 +705,50 @@ func (c *Client) SetMulti(_ context.Context, items []*Item) error {
 	}
 
 	return responseErr
+}
+
+// SetMultiV2 is a batch version of Set
+// (memcached >= 1.6.10)
+func (c *Client) SetMultiV2(_ context.Context, items []*Item) error {
+	itemsMap, err := c.getItemsByServerMap(items)
+	if err != nil {
+		return nil
+	}
+
+	ch := make(chan error, buffered)
+	for addr, items := range itemsMap {
+		go func(addr net.Addr, items []*Item) {
+			ch <- c.setManyV2(addr, items)
+		}(addr, items)
+	}
+
+	var responseErr error
+	for _ = range itemsMap {
+		if ge := <-ch; ge != nil {
+			responseErr = ge
+		}
+	}
+
+	return responseErr
+}
+
+func (c *Client) getItemsByServerMap(items []*Item) (map[net.Addr][]*Item, error) {
+	itemsByServer := make(map[net.Addr][]*Item)
+
+	for _, item := range items {
+		if !legalKey(item.Key) {
+			return nil, ErrMalformedKey
+		}
+
+		addr, err := c.selector.PickServer(item.Key)
+		if err != nil {
+			return nil, err
+		}
+
+		itemsByServer[addr] = append(itemsByServer[addr], item)
+	}
+
+	return itemsByServer, nil
 }
 
 // Add writes the given item, if no value already exists for its
@@ -794,6 +831,35 @@ func (c *Client) setMany(addr net.Addr, items []*Item) error {
 	return c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
 		for _, item := range items {
 			_, err := fmt.Fprintf(rw, "ms %s T%d S%d F%d q\r\n", item.Key, item.Expiration, len(item.Value), item.Flags)
+			if err != nil {
+				return err
+			}
+			_, err = rw.Write(item.Value)
+			if err != nil {
+				return err
+			}
+			_, err = rw.Write(crlf)
+			if err != nil {
+				return err
+			}
+		}
+		_, err := rw.Write(mn)
+		if err != nil {
+			return err
+		}
+		err = rw.Flush()
+		if err != nil {
+			return err
+		}
+
+		return parseMetaCommandResponse(rw)
+	})
+}
+
+func (c *Client) setManyV2(addr net.Addr, items []*Item) error {
+	return c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
+		for _, item := range items {
+			_, err := fmt.Fprintf(rw, "ms %s %d T%d F%d q\r\n", item.Key, len(item.Value), item.Expiration, item.Flags)
 			if err != nil {
 				return err
 			}
