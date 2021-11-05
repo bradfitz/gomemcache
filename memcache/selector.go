@@ -33,6 +33,8 @@ type ServerSelector interface {
 	// should be shared onto.
 	PickServer(key string) (net.Addr, error)
 	Each(func(net.Addr) error) error
+	// Reresolve try to reresolve address for given ip
+	Reresolve(addr *staticAddr) error
 }
 
 // ServerList is a simple ServerSelector. Its zero value is usable.
@@ -43,18 +45,20 @@ type ServerList struct {
 
 // staticAddr caches the Network() and String() values from any net.Addr.
 type staticAddr struct {
-	ntw, str string
+	ntw, str, dnsname string
 }
 
-func newStaticAddr(a net.Addr) net.Addr {
+func newAddr(network, ip string, dnsname string) net.Addr {
 	return &staticAddr{
-		ntw: a.Network(),
-		str: a.String(),
+		ntw:     network,
+		str:     ip,
+		dnsname: dnsname,
 	}
 }
 
 func (s *staticAddr) Network() string { return s.ntw }
 func (s *staticAddr) String() string  { return s.str }
+func (s *staticAddr) DnsName() string { return s.dnsname }
 
 // SetServers changes a ServerList's set of servers at runtime and is
 // safe for concurrent use by multiple goroutines.
@@ -67,19 +71,11 @@ func (s *staticAddr) String() string  { return s.str }
 // is returned, no changes are made to the ServerList.
 func (ss *ServerList) SetServers(servers ...string) error {
 	naddr := make([]net.Addr, len(servers))
+	var err error
 	for i, server := range servers {
-		if strings.Contains(server, "/") {
-			addr, err := net.ResolveUnixAddr("unix", server)
-			if err != nil {
-				return err
-			}
-			naddr[i] = newStaticAddr(addr)
-		} else {
-			tcpaddr, err := net.ResolveTCPAddr("tcp", server)
-			if err != nil {
-				return err
-			}
-			naddr[i] = newStaticAddr(tcpaddr)
+		naddr[i], err = ss.resolve(server)
+		if err != nil {
+			return err
 		}
 	}
 
@@ -89,11 +85,50 @@ func (ss *ServerList) SetServers(servers ...string) error {
 	return nil
 }
 
+// resolve ip for given address
+func (ss *ServerList) resolve(server string) (net.Addr, error) {
+	var resAddr net.Addr
+	if strings.Contains(server, "/") {
+		addr, err := net.ResolveUnixAddr("unix", server)
+		if err != nil {
+			return nil, err
+		}
+		resAddr = newAddr(addr.Network(), addr.String(), server)
+	} else {
+		tcpaddr, err := net.ResolveTCPAddr("tcp", server)
+		if err != nil {
+			return nil, err
+		}
+		resAddr = newAddr(tcpaddr.Network(), tcpaddr.String(), server)
+	}
+
+	return resAddr, nil
+}
+
+// Reresolve ip address in ServerList
+func (ss *ServerList) Reresolve(addr *staticAddr) error {
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+	var err error
+	for i, server := range ss.addrs {
+		if server.String() == addr.String() {
+			ss.addrs[i], err = ss.resolve(addr.DnsName())
+			if err != nil {
+				return err
+			}
+			break
+		}
+	}
+	return nil
+}
+
 // Each iterates over each server calling the given function
 func (ss *ServerList) Each(f func(net.Addr) error) error {
 	ss.mu.RLock()
-	defer ss.mu.RUnlock()
-	for _, a := range ss.addrs {
+	servers := ss.addrs
+	ss.mu.RUnlock()
+
+	for _, a := range servers {
 		if err := f(a); nil != err {
 			return err
 		}

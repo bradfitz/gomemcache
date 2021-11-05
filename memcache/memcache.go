@@ -266,6 +266,17 @@ func (c *Client) dial(addr net.Addr) (net.Conn, error) {
 	}
 
 	if ne, ok := err.(net.Error); ok && ne.Timeout() {
+		addr, ok := addr.(*staticAddr)
+		if ok {
+			err = c.selector.Reresolve(addr)
+			if err == nil {
+				nc, err := net.DialTimeout(addr.Network(), addr.String(), c.netTimeout())
+				if err == nil {
+					return nc, nil
+				}
+			}
+		}
+
 		return nil, &ConnectTimeoutError{addr}
 	}
 
