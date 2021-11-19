@@ -25,12 +25,16 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"io/ioutil"
+	"crypto/tls"
+	"crypto/x509"
 )
 
-const testServer = "localhost:11211"
+const testServer    = "localhost:11211"
+const testServerTLS = "localhost:11212"
 
-func setup(t *testing.T) bool {
-	c, err := net.Dial("tcp", testServer)
+func setup(t *testing.T, server string) bool {
+	c, err := net.Dial("tcp", server)
 	if err != nil {
 		t.Skipf("skipping test; no server running at %s", testServer)
 	}
@@ -40,13 +44,41 @@ func setup(t *testing.T) bool {
 }
 
 func TestLocalhost(t *testing.T) {
-	if !setup(t) {
+	if !setup(t, testServer) {
 		return
 	}
 	c, err := New(testServer)
 	if err != nil {
 		t.Fatal(err)
 	}
+	testWithClient(t, c)
+}
+
+func TestLocalhostTLS(t *testing.T) {
+	if !setup(t, testServerTLS) {
+		return
+	}
+	c, err := New(testServerTLS)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	caCert, err := ioutil.ReadFile("ca.pem")
+	if err != nil {
+		t.Fatal(err)
+	}
+	caCertPool := x509.NewCertPool()
+	caCertPool.AppendCertsFromPEM(caCert)
+	tlsConfig := &tls.Config{
+		RootCAs: caCertPool,
+		ServerName: "localhost",
+	}
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c.TlsConfig = tlsConfig
 	testWithClient(t, c)
 }
 

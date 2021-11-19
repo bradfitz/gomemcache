@@ -20,6 +20,7 @@ package memcache
 import (
 	"bufio"
 	"bytes"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -149,12 +150,13 @@ func NewFromSelector(ss ServerSelector) *Client {
 type Client struct {
 	// Timeout specifies the socket read/write timeout.
 	// If zero, DefaultTimeout is used.
-	Timeout time.Duration
+	Timeout   time.Duration
 
-	selector ServerSelector
+	selector  ServerSelector
 
-	lk       sync.Mutex
-	freeconn map[string][]*conn
+	lk        sync.Mutex
+	freeconn  map[string][]*conn
+	TlsConfig *tls.Config
 }
 
 // Item is an item to be got or stored in a memcached server.
@@ -263,7 +265,16 @@ func (c *Client) dial(addr net.Addr) (net.Conn, error) {
 		err error
 	}
 
-	nc, err := net.DialTimeout(addr.Network(), addr.String(), c.netTimeout())
+	var (
+		nc net.Conn
+		err error
+	)
+	nd := net.Dialer{Timeout: c.netTimeout()}
+	if c.TlsConfig != nil {
+		nc, err = tls.DialWithDialer(&nd, addr.Network(), addr.String(), c.TlsConfig)
+	} else {
+		nc, err = nd.Dial(addr.Network(), addr.String())
+	}
 	if err == nil {
 		return nc, nil
 	}
