@@ -71,7 +71,7 @@ func TestUnixSocket(t *testing.T) {
 	testWithClient(t, New(sock))
 }
 
-func mustSetF(t *testing.T, c *Client) func(*Item) {
+func mustSetF(t *testing.T, c Client) func(*Item) {
 	return func(it *Item) {
 		if err := c.Set(it); err != nil {
 			t.Fatalf("failed to Set %#v: %v", *it, err)
@@ -79,7 +79,7 @@ func mustSetF(t *testing.T, c *Client) func(*Item) {
 	}
 }
 
-func testWithClient(t *testing.T, c *Client) {
+func testWithClient(t *testing.T, c Client) {
 	checkErr := func(err error, format string, args ...interface{}) {
 		if err != nil {
 			t.Fatalf(format, args...)
@@ -127,7 +127,7 @@ func testWithClient(t *testing.T, c *Client) {
 	if err != ErrMalformedKey {
 		t.Errorf("set(foo bar) should return ErrMalformedKey instead of %v", err)
 	}
-	malFormed = &Item{Key: "foo" + string(0x7f), Value: []byte("foobarval")}
+	malFormed = &Item{Key: "foo" + string(rune(0x7f)), Value: []byte("foobarval")}
 	err = c.Set(malFormed)
 	if err != ErrMalformedKey {
 		t.Errorf("set(foo<0x7f>) should return ErrMalformedKey instead of %v", err)
@@ -214,7 +214,7 @@ func testWithClient(t *testing.T, c *Client) {
 	checkErr(err, "error ping: %s", err)
 }
 
-func testTouchWithClient(t *testing.T, c *Client) {
+func testTouchWithClient(t *testing.T, c Client) {
 	if testing.Short() {
 		t.Log("Skipping testing memcache Touch with testing in Short mode")
 		return
@@ -279,14 +279,14 @@ func BenchmarkOnItem(b *testing.B) {
 
 	addr := fakeServer.Addr()
 	c := New(addr.String())
-	if _, err := c.getConn(addr); err != nil {
+	if _, err := c.GetConn(addr); err != nil {
 		b.Fatal("failed to initialize connection to fake server")
 	}
 
 	item := Item{Key: "foo"}
-	dummyFn := func(_ *Client, _ *bufio.ReadWriter, _ *Item) error { return nil }
+	dummyFn := func(_ *bufio.ReadWriter, _ *Item) error { return nil }
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		c.onItem(&item, dummyFn)
+		c.OnItem(&item, dummyFn)
 	}
 }

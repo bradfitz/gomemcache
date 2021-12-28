@@ -143,6 +143,8 @@ type Client interface {
 	Ping() error
 	Increment(key string, delta uint64) (newValue uint64, err error)
 	Decrement(key string, delta uint64) (newValue uint64, err error)
+	GetConn(addr net.Addr) (*conn, error)
+	OnItem(item *Item, fn func(*bufio.ReadWriter, *Item) error) error
 }
 
 // Client is a memcache client.
@@ -288,6 +290,10 @@ func (c *client) dial(addr net.Addr) (net.Conn, error) {
 	return nil, err
 }
 
+func (c *client) GetConn(addr net.Addr) (*conn, error) {
+	return c.getConn(addr)
+}
+
 func (c *client) getConn(addr net.Addr) (*conn, error) {
 	cn, ok := c.getFreeConn(addr)
 	if ok {
@@ -308,7 +314,11 @@ func (c *client) getConn(addr net.Addr) (*conn, error) {
 	return cn, nil
 }
 
-func (c *client) onItem(item *Item, fn func(*client, *bufio.ReadWriter, *Item) error) error {
+func (c *client) OnItem(item *Item, fn func(*bufio.ReadWriter, *Item) error) error {
+	return c.onItem(item, fn)
+}
+
+func (c *client) onItem(item *Item, fn func(*bufio.ReadWriter, *Item) error) error {
 	addr, err := c.selector.PickServer(item.Key)
 	if err != nil {
 		return err
@@ -318,7 +328,7 @@ func (c *client) onItem(item *Item, fn func(*client, *bufio.ReadWriter, *Item) e
 		return err
 	}
 	defer cn.condRelease(&err)
-	if err = fn(c, cn.rw, item); err != nil {
+	if err = fn(cn.rw, item); err != nil {
 		return err
 	}
 	return nil
@@ -555,7 +565,7 @@ func scanGetResponseLine(line []byte, it *Item) (size int, err error) {
 
 // Set writes the given item, unconditionally.
 func (c *client) Set(item *Item) error {
-	return c.onItem(item, (*client).set)
+	return c.onItem(item, c.set)
 }
 
 func (c *client) set(rw *bufio.ReadWriter, item *Item) error {
@@ -565,7 +575,7 @@ func (c *client) set(rw *bufio.ReadWriter, item *Item) error {
 // Add writes the given item, if no value already exists for its
 // key. ErrNotStored is returned if that condition is not met.
 func (c *client) Add(item *Item) error {
-	return c.onItem(item, (*client).add)
+	return c.onItem(item, c.add)
 }
 
 func (c *client) add(rw *bufio.ReadWriter, item *Item) error {
@@ -575,7 +585,7 @@ func (c *client) add(rw *bufio.ReadWriter, item *Item) error {
 // Replace writes the given item, but only if the server *does*
 // already hold data for this key
 func (c *client) Replace(item *Item) error {
-	return c.onItem(item, (*client).replace)
+	return c.onItem(item, c.replace)
 }
 
 func (c *client) replace(rw *bufio.ReadWriter, item *Item) error {
@@ -590,7 +600,7 @@ func (c *client) replace(rw *bufio.ReadWriter, item *Item) error {
 // calls. ErrNotStored is returned if the value was evicted in between
 // the calls.
 func (c *client) CompareAndSwap(item *Item) error {
-	return c.onItem(item, (*client).cas)
+	return c.onItem(item, c.cas)
 }
 
 func (c *client) cas(rw *bufio.ReadWriter, item *Item) error {
