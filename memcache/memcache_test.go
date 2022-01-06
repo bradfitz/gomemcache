@@ -127,7 +127,7 @@ func testWithClient(t *testing.T, c *Client) {
 	if err != ErrMalformedKey {
 		t.Errorf("set(foo bar) should return ErrMalformedKey instead of %v", err)
 	}
-	malFormed = &Item{Key: "foo" + string(0x7f), Value: []byte("foobarval")}
+	malFormed = &Item{Key: "foo" + string(rune(0x7f)), Value: []byte("foobarval")}
 	err = c.Set(malFormed)
 	if err != ErrMalformedKey {
 		t.Errorf("set(foo<0x7f>) should return ErrMalformedKey instead of %v", err)
