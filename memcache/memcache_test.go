@@ -290,3 +290,14 @@ func BenchmarkOnItem(b *testing.B) {
 		c.onItem(&item, dummyFn)
 	}
 }
+
+func BenchmarkScanGetResponseLine(b *testing.B) {
+	line := []byte("VALUE foobar1234 0 4096 1234\r\n")
+	var it Item
+	for i := 0; i < b.N; i++ {
+		_, err := scanGetResponseLine(line, &it)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
