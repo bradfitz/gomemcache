@@ -126,7 +126,7 @@ func New(server ...string) *Client {
 
 // NewFromSelector returns a new Client using the provided ServerSelector.
 func NewFromSelector(ss ServerSelector) *Client {
-	return &Client{selector: ss, DisableCAS: false}
+	return &Client{selector: ss}
 }
 
 // Client is a memcache client.
