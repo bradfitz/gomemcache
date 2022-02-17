@@ -5,7 +5,7 @@ This is a memcache client library derived from [gomemcache](https://github.com/b
 
 ## Why this project?
 
-The version is bumped to v3 to indicate it's has something incompatible with the vanilla one.
+The version is bumped to v3 to indicate that it has something incompatible with the vanilla one.
 
 ### `get` vs `gets`
 
@@ -73,8 +73,7 @@ func main() {
 
     it, err := mc.Get("foo")
         ...
-    }
-
+}
 ```
 
 ## Full docs, see:
