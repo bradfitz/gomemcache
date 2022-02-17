@@ -442,7 +442,7 @@ func (c *Client) touchFromAddr(addr net.Addr, keys []string, expiration int32) e
 			}
 			switch {
 			case bytes.Equal(line, resultTouched):
-				break
+				continue
 			case bytes.Equal(line, resultNotFound):
 				return ErrCacheMiss
 			default:
@@ -486,7 +486,7 @@ func (c *Client) GetMulti(keys []string) (map[string]*Item, error) {
 	}
 
 	var err error
-	for _ = range keyMap {
+	for range keyMap {
 		if ge := <-ch; ge != nil {
 			err = ge
 		}
