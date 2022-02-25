@@ -29,7 +29,7 @@ func NewFromRoundRobinSelector(ss *RoundRobinServerList) *Client {
 
 // RoundRobinServerList is a simple ServerSelector. Its zero value is usable.
 type RoundRobinServerList struct {
-	mu    sync.RWMutex
+	mu    sync.Mutex
 	addrs []net.Addr
 	next int
 }
@@ -69,8 +69,8 @@ func (ss *RoundRobinServerList) SetServers(servers ...string) error {
 
 // Each iterates over each server calling the given function
 func (ss *RoundRobinServerList) Each(f func(net.Addr) error) error {
-	ss.mu.RLock()
-	defer ss.mu.RUnlock()
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
 	for _, a := range ss.addrs {
 		if err := f(a); nil != err {
 			return err
@@ -80,8 +80,8 @@ func (ss *RoundRobinServerList) Each(f func(net.Addr) error) error {
 }
 
 func (ss *RoundRobinServerList) PickServer(key string) (net.Addr, error) {
-	ss.mu.RLock()
-	defer ss.mu.RUnlock()
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
 	if len(ss.addrs) == 0 {
 		return nil, ErrNoServers
 	}
