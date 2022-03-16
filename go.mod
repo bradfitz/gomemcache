@@ -1,3 +1,3 @@
-module github.com/paulo.zenida/gomemcache
+module github.com/paulozenida/gomemcache
 
 go 1.17
