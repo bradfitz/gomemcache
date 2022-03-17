@@ -16,7 +16,10 @@ limitations under the License.
 
 package memcache
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func BenchmarkPickServer(b *testing.B) {
 	// at least two to avoid 0 and 1 special cases:
@@ -32,7 +35,7 @@ func benchPickServer(b *testing.B, servers ...string) {
 	var ss ServerList
 	ss.SetServers(servers...)
 	for i := 0; i < b.N; i++ {
-		if _, err := ss.PickServer("some key"); err != nil {
+		if _, err := ss.PickServer(context.Background(), "some key"); err != nil {
 			b.Fatal(err)
 		}
 	}
