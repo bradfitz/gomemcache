@@ -278,9 +278,10 @@ func BenchmarkOnItem(b *testing.B) {
 		}
 	}()
 
+	ctx := context.Background()
 	addr := fakeServer.Addr()
 	c := New(addr.String())
-	if _, err := c.getConn(addr); err != nil {
+	if _, err := c.getConn(ctx, addr); err != nil {
 		b.Fatal("failed to initialize connection to fake server")
 	}
 
@@ -288,6 +289,6 @@ func BenchmarkOnItem(b *testing.B) {
 	dummyFn := func(_ *Client, _ *bufio.ReadWriter, _ *Item) error { return nil }
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		c.onItem(context.Background(), &item, dummyFn)
+		c.onItem(ctx, &item, dummyFn)
 	}
 }
