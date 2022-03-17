@@ -118,7 +118,7 @@ func (c *Client) Get(key string) (item *Item, err error) {
 // memcache cache miss. The key must be at most 250 bytes in length.
 func (c *Client) GetWithContext(ctx context.Context, key string) (item *Item, err error) {
 	err = c.withKeyAddr(ctx, key, func(addr net.Addr) error {
-		return c.getFromAddr(addr, []string{key}, func(it *Item) { item = it })
+		return c.getFromAddr(ctx, addr, []string{key}, func(it *Item) { item = it })
 	})
 	if err == nil && item == nil {
 		err = ErrCacheMiss
@@ -142,7 +142,7 @@ func (c *Client) Touch(key string, seconds int32) (err error) {
 // The key must be at most 250 bytes in length.
 func (c *Client) TouchWithContext(ctx context.Context, key string, seconds int32) (err error) {
 	return c.withKeyAddr(ctx, key, func(addr net.Addr) error {
-		return c.touchFromAddr(addr, []string{key}, seconds)
+		return c.touchFromAddr(ctx, addr, []string{key}, seconds)
 	})
 }
 
@@ -182,7 +182,7 @@ func (c *Client) GetMultiWithContext(ctx context.Context, keys []string) (map[st
 	ch := make(chan error, buffered)
 	for addr, keys := range keyMap {
 		go func(addr net.Addr, keys []string) {
-			ch <- c.getFromAddr(addr, keys, addItemToMap)
+			ch <- c.getFromAddr(ctx, addr, keys, addItemToMap)
 		}(addr, keys)
 	}
 
@@ -383,7 +383,14 @@ func (c *Client) dial(addr net.Addr) (net.Conn, error) {
 	return nil, err
 }
 
-func (c *Client) getConn(addr net.Addr) (*conn, error) {
+func (c *Client) getConn(ctx context.Context, addr net.Addr) (*conn, error) {
+	// Check if the context is expired.
+	select {
+	default:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+
 	cn, ok := c.getFreeConn(addr)
 	if ok {
 		cn.extendDeadline()
@@ -408,7 +415,7 @@ func (c *Client) onItem(ctx context.Context, item *Item, fn func(*Client, *bufio
 	if err != nil {
 		return err
 	}
-	cn, err := c.getConn(addr)
+	cn, err := c.getConn(ctx, addr)
 	if err != nil {
 		return err
 	}
@@ -430,8 +437,8 @@ func (c *Client) withKeyAddr(ctx context.Context, key string, fn func(net.Addr) 
 	return fn(addr)
 }
 
-func (c *Client) withAddrRw(addr net.Addr, fn func(*bufio.ReadWriter) error) (err error) {
-	cn, err := c.getConn(addr)
+func (c *Client) withAddrRw(ctx context.Context, addr net.Addr, fn func(*bufio.ReadWriter) error) (err error) {
+	cn, err := c.getConn(ctx, addr)
 	if err != nil {
 		return err
 	}
@@ -441,12 +448,12 @@ func (c *Client) withAddrRw(addr net.Addr, fn func(*bufio.ReadWriter) error) (er
 
 func (c *Client) withKeyRw(ctx context.Context, key string, fn func(*bufio.ReadWriter) error) error {
 	return c.withKeyAddr(ctx, key, func(addr net.Addr) error {
-		return c.withAddrRw(addr, fn)
+		return c.withAddrRw(ctx, addr, fn)
 	})
 }
 
-func (c *Client) getFromAddr(addr net.Addr, keys []string, cb func(*Item)) error {
-	return c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
+func (c *Client) getFromAddr(ctx context.Context, addr net.Addr, keys []string, cb func(*Item)) error {
+	return c.withAddrRw(ctx, addr, func(rw *bufio.ReadWriter) error {
 		if _, err := fmt.Fprintf(rw, "gets %s\r\n", strings.Join(keys, " ")); err != nil {
 			return err
 		}
@@ -461,8 +468,8 @@ func (c *Client) getFromAddr(addr net.Addr, keys []string, cb func(*Item)) error
 }
 
 // flushAllFromAddr send the flush_all command to the given addr
-func (c *Client) flushAllFromAddr(addr net.Addr) error {
-	return c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
+func (c *Client) flushAllFromAddr(ctx context.Context, addr net.Addr) error {
+	return c.withAddrRw(ctx, addr, func(rw *bufio.ReadWriter) error {
 		if _, err := fmt.Fprintf(rw, "flush_all\r\n"); err != nil {
 			return err
 		}
@@ -484,8 +491,8 @@ func (c *Client) flushAllFromAddr(addr net.Addr) error {
 }
 
 // ping sends the version command to the given addr
-func (c *Client) ping(addr net.Addr) error {
-	return c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
+func (c *Client) ping(ctx context.Context, addr net.Addr) error {
+	return c.withAddrRw(ctx, addr, func(rw *bufio.ReadWriter) error {
 		if _, err := fmt.Fprintf(rw, "version\r\n"); err != nil {
 			return err
 		}
@@ -507,8 +514,8 @@ func (c *Client) ping(addr net.Addr) error {
 	})
 }
 
-func (c *Client) touchFromAddr(addr net.Addr, keys []string, expiration int32) error {
-	return c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
+func (c *Client) touchFromAddr(ctx context.Context, addr net.Addr, keys []string, expiration int32) error {
+	return c.withAddrRw(ctx, addr, func(rw *bufio.ReadWriter) error {
 		for _, key := range keys {
 			if _, err := fmt.Fprintf(rw, "touch %s %d\r\n", key, expiration); err != nil {
 				return err

@@ -33,7 +33,7 @@ type ServerSelector interface {
 	// PickServer returns the server address that a given item
 	// should be shared onto.
 	PickServer(ctx context.Context, key string) (net.Addr, error)
-	Each(ctx context.Context, fn func(net.Addr) error) error
+	Each(ctx context.Context, fn func(context.Context, net.Addr) error) error
 }
 
 // ServerList is a simple ServerSelector. Its zero value is usable.
@@ -91,11 +91,11 @@ func (ss *ServerList) SetServers(servers ...string) error {
 }
 
 // Each iterates over each server calling the given function
-func (ss *ServerList) Each(_ context.Context, fn func(net.Addr) error) error {
+func (ss *ServerList) Each(ctx context.Context, fn func(context.Context, net.Addr) error) error {
 	ss.mu.RLock()
 	defer ss.mu.RUnlock()
 	for _, a := range ss.addrs {
-		if err := fn(a); nil != err {
+		if err := fn(ctx, a); nil != err {
 			return err
 		}
 	}
