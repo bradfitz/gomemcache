@@ -17,6 +17,7 @@ limitations under the License.
 package memcache
 
 import (
+	"context"
 	"hash/crc32"
 	"net"
 	"strings"
@@ -31,8 +32,8 @@ import (
 type ServerSelector interface {
 	// PickServer returns the server address that a given item
 	// should be shared onto.
-	PickServer(key string) (net.Addr, error)
-	Each(func(net.Addr) error) error
+	PickServer(ctx context.Context, key string) (net.Addr, error)
+	Each(ctx context.Context, fn func(context.Context, net.Addr) error) error
 }
 
 // ServerList is a simple ServerSelector. Its zero value is usable.
@@ -90,11 +91,11 @@ func (ss *ServerList) SetServers(servers ...string) error {
 }
 
 // Each iterates over each server calling the given function
-func (ss *ServerList) Each(f func(net.Addr) error) error {
+func (ss *ServerList) Each(ctx context.Context, fn func(context.Context, net.Addr) error) error {
 	ss.mu.RLock()
 	defer ss.mu.RUnlock()
 	for _, a := range ss.addrs {
-		if err := f(a); nil != err {
+		if err := fn(ctx, a); nil != err {
 			return err
 		}
 	}
@@ -111,7 +112,7 @@ var keyBufPool = sync.Pool{
 	},
 }
 
-func (ss *ServerList) PickServer(key string) (net.Addr, error) {
+func (ss *ServerList) PickServer(_ context.Context, key string) (net.Addr, error) {
 	ss.mu.RLock()
 	defer ss.mu.RUnlock()
 	if len(ss.addrs) == 0 {
