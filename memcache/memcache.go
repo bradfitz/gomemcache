@@ -650,3 +650,63 @@ func (c *Client) incrDecr(ctx context.Context, verb, key string, delta uint64) (
 	})
 	return val, err
 }
+
+// Stats returns a map of stats indexed by server.
+func (c *Client) Stats(ctx context.Context, subcontext string) (map[net.Addr]Stats, error) {
+	out := map[net.Addr]Stats{}
+	err := c.selector.Each(ctx, c.stats(out, subcontext))
+	if err != nil {
+		return nil, err
+	}
+
+	return out, nil
+}
+
+func (c *Client) stats(out map[net.Addr]Stats, subcontext string) func(ctx context.Context, addr net.Addr) error {
+	return func(ctx context.Context, addr net.Addr) error {
+		stats, err := c.getStatsFromAddr(ctx, addr, fmt.Sprintf("stats %s\r\n", subcontext))
+		if err != nil {
+			return err
+		}
+		out[addr] = stats
+		return nil
+	}
+}
+
+func (c *Client) getStatsFromAddr(ctx context.Context, addr net.Addr, command string) (Stats, error) {
+	out := map[string]string{}
+	err := c.withAddrRw(ctx, addr, func(rw *bufio.ReadWriter) error {
+		if _, err := fmt.Fprintf(rw, command); err != nil {
+			return err
+		}
+		if err := rw.Flush(); err != nil {
+			return err
+		}
+		var err error
+		out, err = parseStatsResponse(rw.Reader)
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+
+	return out, err
+}
+
+func parseStatsResponse(r *bufio.Reader) (Stats, error) {
+	stats := Stats{}
+	for {
+		line, err := r.ReadSlice('\n')
+		if err != nil {
+			return stats, err
+		}
+		if bytes.Equal(line, resultEnd) {
+			return stats, nil
+		}
+
+		err = stats.parse(string(line))
+		if err != nil {
+			return nil, err
+		}
+	}
+}
