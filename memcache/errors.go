@@ -19,9 +19,6 @@ var (
 	// CompareAndSwap) failed because the condition was not satisfied.
 	ErrNotStored = errors.New("memcache: item not stored")
 
-	// ErrServerError means that a server error occurred.
-	ErrServerError = errors.New("memcache: server error")
-
 	// ErrNoStats means that no statistics were available.
 	ErrNoStats = errors.New("memcache: no statistics available")
 

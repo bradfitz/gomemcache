@@ -1,7 +1,6 @@
 package memcache
 
 import (
-	"fmt"
 	"strings"
 )
 
@@ -18,7 +17,7 @@ func (s Stats) parse(line string) error {
 	trimmedLine := strings.TrimSpace(line)
 	statEl := strings.Split(trimmedLine, " ")
 	if len(statEl) != 3 {
-		return fmt.Errorf("bad stats command")
+		return ErrNoStats
 	}
 
 	key := statEl[statsCommandKeyIndex]
