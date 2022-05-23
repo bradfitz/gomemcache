@@ -1769,3 +1769,77 @@ func (c *Client) parseFlagsForMetaDelete(metaItem *MetaDeleteItem) string {
 
 	return commandBuilder.String()
 }
+
+// This function retrieves stats for each connection. The stats command prints statistical information
+// for a given stat type
+
+// Arguments
+// @args: the stat command to get statistical information of each connection, this will be passed as-is
+// to memcache. Some examples of valid stats commands: "stats", "stats slabs", "stats settings", and "stats items"
+
+// GetStats Return values
+// @addrToStats: contains stats for each connection,
+// which for each connection is encapsulated in a string-to-string hashmap
+// @err: error that can be raised as a result of the operation
+func (c *Client) GetStats(args string) (addrToStats map[string]map[string]string, err error) {
+	if len(args) <= 0 {
+		return nil, errors.New("arg string parameter must not be empty.")
+	}
+	addrToStats = make(map[string]map[string]string)
+	err = c.selector.Each(func(addr net.Addr) error {
+		return c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
+			if _, err := fmt.Fprintf(rw, "%s%s", args, string(crlf)); err != nil {
+				return err
+			}
+			if err := rw.Flush(); err != nil {
+				return err
+			}
+			stats, err := parseStatsResponse(rw.Reader)
+			if err != nil {
+				return err
+			}
+			addrToStats[addr.String()] = stats
+			return nil
+		})
+	})
+
+	return addrToStats, err
+}
+
+// parseStatsResponse reads a GetStats response and maps each string property to its string value
+func parseStatsResponse(r *bufio.Reader) (stats map[string]string, err error) {
+	stats = make(map[string]string)
+	var firstToken string
+	for {
+		line, err := r.ReadSlice('\n')
+		if err != nil {
+			return nil, err
+		}
+
+		if len(line) <= 0 {
+			// nothing to read but no error too, should not throw an error
+			continue
+		}
+
+		lineSlices := bytes.Split(line, space)
+		if len(lineSlices) <= 0 {
+			continue
+		}
+
+		firstToken = strings.TrimSpace(string(lineSlices[0]))
+		if firstToken == "END" {
+			break
+		}
+
+		// stat type is not supported, should throw
+		if firstToken == "ERROR" {
+			return nil, errors.New("stat type is not supported")
+		}
+
+		// if this line has a stat name and value
+		if len(lineSlices) > 2 {
+			stats[strings.TrimSpace(string(lineSlices[1]))] = strings.TrimSpace(string(lineSlices[2]))
+		}
+	}
+	return stats, nil
+}

@@ -220,6 +220,28 @@ func testWithClient(t *testing.T, c *Client) {
 	testMetaDeleteCommandsWithClient(t, c, checkErr)
 	testMetaArithmeticCommandsWithClient(t, c, checkErr)
 	testMetaDebugCommandsWithClient(t, c, checkErr)
+
+	// test successful GetStats command
+	testGetStatsCommand(t, c, "stats", false, []string{"pid", "uptime", "version"})
+	testGetStatsCommand(t, c, "stats conns", false, []string{"addr", "listen_addr", "state"})
+	testGetStatsCommand(t, c, "stats slabs", false, []string{"chunk_size", "total_pages", "used_chunks"})
+	testGetStatsCommand(t, c, "stats settings", false, []string{"maxbytes", "maxconns", "tcpport"})
+
+	// items stats won't return properties if no items are set in memcached
+	itemsStatsTestVal := &Item{Key: "itemsStatsTest", Value: []byte("itemsStatsTestVal"), Flags: 123}
+	err = c.Set(itemsStatsTestVal)
+	checkErr(err, "Setting test value for items stats fetch: %v", err)
+	testGetStatsCommand(t, c, "stats items", false, []string{"number", "age", "age_warm"})
+	err = c.Delete(itemsStatsTestVal.Key)
+	checkErr(err, "Deleting items state fetch test item: %v", err)
+
+	// stats sizes is disabled by default
+	testGetStatsCommand(t, c, "stats sizes", false, []string{})
+
+	// test failed GetStats command
+	testGetStatsCommand(t, c, "stat", true, []string{})
+	testGetStatsCommand(t, c, "stats typo", true, []string{})
+	testGetStatsCommand(t, c, "STATS FAKE", true, []string{})
 }
 
 func testTouchWithClient(t *testing.T, c *Client) {
@@ -908,4 +930,41 @@ func BenchmarkOnItem(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		c.onItem(&item, dummyFn)
 	}
+}
+
+func testGetStatsCommand(t *testing.T, c *Client, args string, expectedFailure bool, expectedProperties []string) {
+	stats, err := c.GetStats(args)
+	if err != nil || len(stats) < 1 {
+		if expectedFailure {
+			return
+		}
+		t.Errorf("Could not call GetStats for %s successfully", args)
+	}
+	c.selector.Each(func(addr net.Addr) error {
+		if stats[addr.String()] == nil || len(stats[addr.String()]) < 1 {
+			t.Errorf("Empty or nil stats for %s address and %s stat", addr.String(), args)
+		}
+		c.selector.Each(func(addr net.Addr) error {
+			currentUnmatchedProperties := expectedProperties
+			for statKey, _ := range stats[addr.String()] {
+				// separate stat key by : delim
+				statKeySlices := strings.Split(statKey, ":")
+				// the stat key name should always be after the last ":"
+				parsedStatKey := statKeySlices[len(statKeySlices)-1]
+				for i, property := range currentUnmatchedProperties {
+					if parsedStatKey == property {
+						currentUnmatchedProperties = append(currentUnmatchedProperties[:i], currentUnmatchedProperties[i+1:]...)
+					}
+				}
+				if len(currentUnmatchedProperties) == 0 {
+					break
+				}
+			}
+			if len(currentUnmatchedProperties) > 0 {
+				t.Errorf("Stats map does not contain %s property in %s address and %s stat, this may be caused by a stats fetch failure, or an update to the memcached stats schema.", currentUnmatchedProperties, addr, args)
+			}
+			return nil
+		})
+		return nil
+	})
 }
