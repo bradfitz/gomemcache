@@ -167,6 +167,10 @@ type Item struct {
 	// Zero means the Item has no expiration time.
 	Expiration int32
 
+	// NoReply sets the no_reply flag on set, add, replace, delete and flush_all command.
+	// Else it ignores this field.
+	NoReply bool
+
 	// Compare and swap ID.
 	casid uint64
 }
@@ -581,9 +585,16 @@ func (c *Client) populateOne(rw *bufio.ReadWriter, verb string, item *Item) erro
 		return ErrMalformedKey
 	}
 	var err error
+	noreply := ""
+	if item.NoReply {
+		noreply = "noreply"
+	}
 	if verb == "cas" {
-		_, err = fmt.Fprintf(rw, "%s %s %d %d %d %d\r\n",
-			verb, item.Key, item.Flags, item.Expiration, len(item.Value), item.casid)
+		_, err = fmt.Fprintf(rw, "%s %s %d %d %d %d %s\r\n",
+			verb, item.Key, item.Flags, item.Expiration, len(item.Value), item.casid, noreply)
+	} else if verb == "set" || verb == "add" || verb == "replace" {
+		_, err = fmt.Fprintf(rw, "%s %s %d %d %d %s\r\n",
+			verb, item.Key, item.Flags, item.Expiration, len(item.Value), noreply)
 	} else {
 		_, err = fmt.Fprintf(rw, "%s %s %d %d %d\r\n",
 			verb, item.Key, item.Flags, item.Expiration, len(item.Value))
@@ -651,16 +662,24 @@ func writeExpectf(rw *bufio.ReadWriter, expect []byte, format string, args ...in
 
 // Delete deletes the item with the provided key. The error ErrCacheMiss is
 // returned if the item didn't already exist in the cache.
-func (c *Client) Delete(key string) error {
+func (c *Client) Delete(key string, noreply bool) error {
+	noreply_param := ""
+	if noreply {
+		noreply_param = "noreply"
+	}
 	return c.withKeyRw(key, func(rw *bufio.ReadWriter) error {
-		return writeExpectf(rw, resultDeleted, "delete %s\r\n", key)
+		return writeExpectf(rw, resultDeleted, "delete %s %s\r\n", key, noreply_param)
 	})
 }
 
 // DeleteAll deletes all items in the cache.
-func (c *Client) DeleteAll() error {
+func (c *Client) DeleteAll(noreply bool) error {
+	noreply_param := ""
+	if noreply {
+		noreply_param = "noreply"
+	}
 	return c.withKeyRw("", func(rw *bufio.ReadWriter) error {
-		return writeExpectf(rw, resultDeleted, "flush_all\r\n")
+		return writeExpectf(rw, resultDeleted, "flush_all %s\r\n", noreply_param)
 	})
 }
 

@@ -169,7 +169,7 @@ func testWithClient(t *testing.T, c *Client) {
 	}
 
 	// Delete
-	err = c.Delete("foo")
+	err = c.Delete("foo", false)
 	checkErr(err, "Delete: %v", err)
 	it, err = c.Get("foo")
 	if err != ErrCacheMiss {
@@ -188,7 +188,7 @@ func testWithClient(t *testing.T, c *Client) {
 	if n != 1 {
 		t.Fatalf("Decrement 49: want=1, got=%d", n)
 	}
-	err = c.Delete("num")
+	err = c.Delete("num", false)
 	checkErr(err, "delete num: %v", err)
 	n, err = c.Increment("num", 1)
 	if err != ErrCacheMiss {
@@ -202,7 +202,7 @@ func testWithClient(t *testing.T, c *Client) {
 	testTouchWithClient(t, c)
 
 	// Test Delete All
-	err = c.DeleteAll()
+	err = c.DeleteAll(false)
 	checkErr(err, "DeleteAll: %v", err)
 	it, err = c.Get("bar")
 	if err != ErrCacheMiss {
