@@ -525,17 +525,49 @@ func parseGetResponse(r *bufio.Reader, cb func(*Item)) error {
 // scanGetResponseLine populates it and returns the declared size of the item.
 // It does not read the bytes of the item.
 func scanGetResponseLine(line []byte, it *Item) (size int, err error) {
-	pattern := "VALUE %s %d %d %d\r\n"
-	dest := []interface{}{&it.Key, &it.Flags, &size, &it.casid}
-	if bytes.Count(line, space) == 3 {
-		pattern = "VALUE %s %d %d\r\n"
-		dest = dest[:3]
-	}
-	n, err := fmt.Sscanf(string(line), pattern, dest...)
-	if err != nil || n != len(dest) {
+	errf := func(line []byte) (int, error) {
 		return -1, fmt.Errorf("memcache: unexpected line in get response: %q", line)
 	}
-	return size, nil
+	if !bytes.HasPrefix(line, []byte("VALUE ")) || !bytes.HasSuffix(line, []byte("\r\n")) {
+		return errf(line)
+	}
+	s := string(line[6 : len(line)-2])
+	var rest string
+	var found bool
+	it.Key, rest, found = cut(s, ' ')
+	if !found {
+		return errf(line)
+	}
+	val, rest, found := cut(rest, ' ')
+	if !found {
+		return errf(line)
+	}
+	flags64, err := strconv.ParseUint(val, 10, 32)
+	if err != nil {
+		return errf(line)
+	}
+	it.Flags = uint32(flags64)
+	val, rest, found = cut(rest, ' ')
+	size64, err := strconv.ParseUint(val, 10, 32)
+	if err != nil {
+		return errf(line)
+	}
+	if !found { // final CAS ID is optional.
+		return int(size64), nil
+	}
+	it.casid, err = strconv.ParseUint(rest, 10, 64)
+	if err != nil {
+		return errf(line)
+	}
+	return int(size64), nil
+}
+
+// Similar to strings.Cut in Go 1.18, but sep can only be 1 byte.
+func cut(s string, sep byte) (before, after string, found bool) {
+	if i := strings.IndexByte(s, sep); i >= 0 {
+		return s[:i], s[i+1:], true
+	}
+	return s, "", false
 }
 
 // Set writes the given item, unconditionally.
