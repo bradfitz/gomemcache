@@ -30,7 +30,7 @@ func BenchmarkPickServer_Single(b *testing.B) {
 func benchPickServer(b *testing.B, servers ...string) {
 	b.ReportAllocs()
 	var ss ServerList
-	ss.SetServers(servers...)
+	_ = ss.SetServers(servers...)
 	for i := 0; i < b.N; i++ {
 		if _, err := ss.PickServer("some key"); err != nil {
 			b.Fatal(err)
