@@ -711,3 +711,16 @@ func (c *Client) incrDecr(verb, key string, delta uint64) (uint64, error) {
 	})
 	return val, err
 }
+
+// Close is a method to close all connection
+func (c *Client) Close() (err error) {
+	for _, freeConns := range c.freeconn {
+		for _, freeconn := range freeConns {
+			err = freeconn.nc.Close()
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
