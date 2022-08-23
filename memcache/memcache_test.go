@@ -26,6 +26,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -300,4 +301,47 @@ func BenchmarkScanGetResponseLine(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
+}
+
+func BenchmarkParseGetResponse(b *testing.B) {
+	valueSize := 500
+	response := strings.NewReader(fmt.Sprintf("VALUE foobar1234 0 %v 1234\r\n%s\r\nEND\r\n", valueSize, strings.Repeat("a", valueSize)))
+	c := &Client{
+		Pool: newTestPool(valueSize + 2),
+	}
+	var reader = bufio.NewReader(response)
+	var err error
+	for i := 0; i < b.N; i++ {
+		err = c.parseGetResponse(reader, func(it *Item) {
+			c.Pool.Put(&it.Value)
+		})
+		if err != nil {
+			b.Fatal(err)
+		}
+		response.Seek(0, 0)
+		reader.Reset(response)
+	}
+}
+
+type testPool struct {
+	pool sync.Pool
+}
+
+func newTestPool(dataSize int) BytesPool {
+	return &testPool{
+		pool: sync.Pool{
+			New: func() interface{} {
+				b := make([]byte, 0, dataSize)
+				return &b
+			},
+		},
+	}
+}
+
+func (p *testPool) Get(sz int) (*[]byte, error) {
+	return p.pool.Get().(*[]byte), nil
+}
+
+func (p *testPool) Put(b *[]byte) {
+	p.pool.Put(b)
 }
