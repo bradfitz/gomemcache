@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 
 	"strconv"
@@ -544,6 +545,9 @@ func scanGetResponseLine(line []byte, it *Item) (size int, err error) {
 	val, rest, found = cut(rest, ' ')
 	size64, err := strconv.ParseUint(val, 10, 32)
 	if err != nil {
+		return errf(line)
+	}
+	if size64 > math.MaxInt { // Can happen if int is 32-bit
 		return errf(line)
 	}
 	if !found { // final CAS ID is optional.
