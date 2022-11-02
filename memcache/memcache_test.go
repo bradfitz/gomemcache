@@ -301,3 +301,70 @@ func BenchmarkScanGetResponseLine(b *testing.B) {
 		}
 	}
 }
+
+func TestScanGetResponseLine(t *testing.T) {
+	tests := []struct {
+		name      string
+		line      string
+		wantKey   string
+		wantFlags uint32
+		wantCasid uint64
+		wantSize  int
+		wantErr   bool
+	}{
+		{name: "blank", line: "",
+			wantErr: true},
+		{name: "malformed1", line: "VALU foobar1234 1 4096\r\n",
+			wantErr: true},
+		{name: "malformed2", line: "VALUEfoobar1234 1 4096\r\n",
+			wantErr: true},
+		{name: "malformed3", line: "VALUE foobar1234 14096\r\n",
+			wantErr: true},
+		{name: "malformed4", line: "VALUE foobar123414096\r\n",
+			wantErr: true},
+		{name: "no-eol", line: "VALUE foobar1234 1 4096",
+			wantErr: true},
+		{name: "basic", line: "VALUE foobar1234 1 4096\r\n",
+			wantKey: "foobar1234", wantFlags: 1, wantSize: 4096},
+		{name: "casid", line: "VALUE foobar1234 1 4096 1234\r\n",
+			wantKey: "foobar1234", wantFlags: 1, wantSize: 4096, wantCasid: 1234},
+		{name: "flags-max-uint32", line: "VALUE key 4294967295 1\r\n",
+			wantKey: "key", wantFlags: 4294967295, wantSize: 1},
+		{name: "flags-overflow", line: "VALUE key 4294967296 1\r\n",
+			wantErr: true},
+		{name: "size-max-uint32", line: "VALUE key 1 2147483647\r\n",
+			wantKey: "key", wantFlags: 1, wantSize: 2147483647},
+		{name: "size-overflow", line: "VALUE key 1 4294967296\r\n",
+			wantErr: true},
+		{name: "casid-overflow", line: "VALUE key 1 4096 18446744073709551616\r\n",
+			wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got Item
+			gotSize, err := scanGetResponseLine([]byte(tt.line), &got)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("scanGetResponseLine() should have returned error")
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("scanGetResponseLine() returned error %s", err)
+				return
+			}
+			if got.Key != tt.wantKey {
+				t.Errorf("key = %v, want %v", got.Key, tt.wantKey)
+			}
+			if got.Flags != tt.wantFlags {
+				t.Errorf("flags = %v, want %v", got.Flags, tt.wantFlags)
+			}
+			if got.casid != tt.wantCasid {
+				t.Errorf("flags = %v, want %v", got.casid, tt.wantCasid)
+			}
+			if gotSize != tt.wantSize {
+				t.Errorf("size = %v, want %v", gotSize, tt.wantSize)
+			}
+		})
+	}
+}
