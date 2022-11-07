@@ -20,11 +20,11 @@ package memcache
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net"
-
 	"strconv"
 	"strings"
 	"sync"
@@ -132,8 +132,9 @@ func NewFromSelector(ss ServerSelector) *Client {
 // Client is a memcache client.
 // It is safe for unlocked use by multiple concurrent goroutines.
 type Client struct {
-	// Dialer specifies a custom dialer used to dial new connections to a server.
-	DialTimeout func(network, address string, timeout time.Duration) (net.Conn, error)
+	// DialContext connects to the address on the named network
+	// using the provided context
+	DialContext func(ctx context.Context, network, address string) (net.Conn, error)
 
 	// Timeout specifies the socket read/write timeout.
 	// If zero, DefaultTimeout is used.
@@ -258,12 +259,18 @@ func (cte *ConnectTimeoutError) Error() string {
 }
 
 func (c *Client) dial(addr net.Addr) (net.Conn, error) {
-	dialTimeout := c.DialTimeout
-	if dialTimeout == nil {
-		dialTimeout = net.DialTimeout
+	ctx, cancel := context.WithTimeout(context.Background(), c.netTimeout())
+	defer cancel()
+
+	dialerContext := c.DialContext
+	if dialerContext == nil {
+		dialer := net.Dialer{
+			Timeout: c.netTimeout(),
+		}
+		dialerContext = dialer.DialContext
 	}
 
-	nc, err := dialTimeout(addr.Network(), addr.String(), c.netTimeout())
+	nc, err := dialerContext(ctx, addr.Network(), addr.String())
 	if err == nil {
 		return nc, nil
 	}
