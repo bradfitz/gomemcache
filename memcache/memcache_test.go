@@ -38,7 +38,7 @@ func setup(t *testing.T) bool {
 	if err != nil {
 		t.Skipf("skipping test; no server running at %s", testServer)
 	}
-	c.Write([]byte("flush_all\r\n"))
+	_, _ = c.Write([]byte("flush_all\r\n"))
 	c.Close()
 	return true
 }
@@ -58,8 +58,10 @@ func TestUnixSocket(t *testing.T) {
 		t.Skipf("skipping test; couldn't find memcached")
 		return
 	}
-	defer cmd.Wait()
-	defer cmd.Process.Kill()
+	defer func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	}()
 
 	// Wait a bit for the socket to appear.
 	for i := 0; i < 10; i++ {
@@ -172,7 +174,7 @@ func testWithClient(t *testing.T, c *Client) {
 	// Delete
 	err = c.Delete("foo")
 	checkErr(err, "Delete: %v", err)
-	it, err = c.Get("foo")
+	_, err = c.Get("foo")
 	if err != ErrCacheMiss {
 		t.Errorf("post-Delete want ErrCacheMiss, got %v", err)
 	}
@@ -191,12 +193,12 @@ func testWithClient(t *testing.T, c *Client) {
 	}
 	err = c.Delete("num")
 	checkErr(err, "delete num: %v", err)
-	n, err = c.Increment("num", 1)
+	_, err = c.Increment("num", 1)
 	if err != ErrCacheMiss {
 		t.Fatalf("increment post-delete: want ErrCacheMiss, got %v", err)
 	}
 	mustSet(&Item{Key: "num", Value: []byte("not-numeric")})
-	n, err = c.Increment("num", 1)
+	_, err = c.Increment("num", 1)
 	if err == nil || !strings.Contains(err.Error(), "client error") {
 		t.Fatalf("increment non-number: want client error, got %v", err)
 	}
@@ -205,7 +207,7 @@ func testWithClient(t *testing.T, c *Client) {
 	// Test Delete All
 	err = c.DeleteAll()
 	checkErr(err, "DeleteAll: %v", err)
-	it, err = c.Get("bar")
+	_, err = c.Get("bar")
 	if err != ErrCacheMiss {
 		t.Errorf("post-DeleteAll want ErrCacheMiss, got %v", err)
 	}
@@ -254,7 +256,7 @@ func testTouchWithClient(t *testing.T, c *Client) {
 
 	_, err = c.Get("bar")
 	if nil == err {
-		t.Fatalf("item bar did not expire within %v seconds", time.Now().Sub(setTime).Seconds())
+		t.Fatalf("item bar did not expire within %v seconds", time.Since(setTime).Seconds())
 	} else {
 		if err != ErrCacheMiss {
 			t.Fatalf("unexpected error retrieving bar: %v", err.Error())
@@ -271,7 +273,7 @@ func BenchmarkOnItem(b *testing.B) {
 	go func() {
 		for {
 			if c, err := fakeServer.Accept(); err == nil {
-				go func() { io.Copy(ioutil.Discard, c) }()
+				go func() { _, _ = io.Copy(ioutil.Discard, c) }()
 			} else {
 				return
 			}
@@ -288,7 +290,7 @@ func BenchmarkOnItem(b *testing.B) {
 	dummyFn := func(_ *Client, _ *bufio.ReadWriter, _ *Item) error { return nil }
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		c.onItem(&item, dummyFn)
+		_ = c.onItem(&item, dummyFn)
 	}
 }
 

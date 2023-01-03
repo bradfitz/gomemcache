@@ -100,7 +100,6 @@ func legalKey(key string) bool {
 
 var (
 	crlf            = []byte("\r\n")
-	space           = []byte(" ")
 	resultOK        = []byte("OK\r\n")
 	resultStored    = []byte("STORED\r\n")
 	resultNotStored = []byte("NOT_STORED\r\n")
@@ -113,6 +112,7 @@ var (
 
 	resultClientErrorPrefix = []byte("CLIENT_ERROR ")
 	versionPrefix           = []byte("VERSION")
+	valuePrefix             = []byte("VALUE ")
 )
 
 // New returns a memcache client using the provided server(s)
@@ -120,7 +120,7 @@ var (
 // it gets a proportional amount of weight.
 func New(server ...string) *Client {
 	ss := new(ServerList)
-	ss.SetServers(server...)
+	_ = ss.SetServers(server...)
 	return NewFromSelector(ss)
 }
 
@@ -198,7 +198,7 @@ func (cn *conn) release() {
 }
 
 func (cn *conn) extendDeadline() {
-	cn.nc.SetDeadline(time.Now().Add(cn.c.netTimeout()))
+	_ = cn.nc.SetDeadline(time.Now().Add(cn.c.netTimeout()))
 }
 
 // condRelease releases this connection if the error pointed to by err
@@ -494,7 +494,7 @@ func (c *Client) GetMulti(keys []string) (map[string]*Item, error) {
 	}
 
 	var err error
-	for _ = range keyMap {
+	for range keyMap {
 		if ge := <-ch; ge != nil {
 			err = ge
 		}
@@ -552,7 +552,7 @@ func scanGetResponseLine(line []byte, it *Item) (size int, err error) {
 	errf := func(line []byte) (int, error) {
 		return -1, fmt.Errorf("memcache: unexpected line in get response: %q", line)
 	}
-	if !bytes.HasPrefix(line, []byte("VALUE ")) || !bytes.HasSuffix(line, []byte("\r\n")) {
+	if !bytes.HasPrefix(line, valuePrefix) || !bytes.HasSuffix(line, []byte("\r\n")) {
 		return errf(line)
 	}
 	s := string(line[6 : len(line)-2])
