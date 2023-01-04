@@ -13,9 +13,10 @@ jobs:
 
       - name: Check out code
         uses: actions/checkout@v3
-
+      - name: Install Memcached
+        run: sudo apt-get install -y memcached
       - name: Run Tests
-        run: go test -race ./...
+        run: go test -v -race ./...
 
   lint:
     name: Lint

@@ -308,42 +308,56 @@ func BenchmarkScanGetResponseLine(b *testing.B) {
 func BenchmarkParseGetResponse(b *testing.B) {
 	valueSize := 500
 	response := strings.NewReader(fmt.Sprintf("VALUE foobar1234 0 %v 1234\r\n%s\r\nEND\r\n", valueSize, strings.Repeat("a", valueSize)))
-	c := &Client{
-		Pool: newTestPool(valueSize + 2),
-	}
-	var reader = bufio.NewReader(response)
-	var err error
+
+	opts := newOptions(WithAllocator(newTestAllocator(valueSize + 2)))
+	c := &Client{}
+	reader := bufio.NewReader(response)
+
 	for i := 0; i < b.N; i++ {
-		err = c.parseGetResponse(reader, func(it *Item) {
-			c.Pool.Put(&it.Value)
+		err := c.parseGetResponse(reader, opts, func(it *Item) {
+			opts.Alloc.Put(&it.Value)
 		})
 		if err != nil {
 			b.Fatal(err)
 		}
-		response.Seek(0, 0)
+		_, err = response.Seek(0, 0)
+		if err != nil {
+			b.Fatal(err)
+		}
 		reader.Reset(response)
+
 	}
 }
 
-type testPool struct {
-	pool sync.Pool
+type testAllocator struct {
+	pool         sync.Pool
+	expectedSize int
 }
 
-func newTestPool(dataSize int) BytesPool {
-	return &testPool{
+func newTestAllocator(dataSize int) Allocator {
+	return &testAllocator{
+		expectedSize: dataSize,
 		pool: sync.Pool{
 			New: func() interface{} {
-				b := make([]byte, 0, dataSize)
+				b := make([]byte, dataSize)
 				return &b
 			},
 		},
 	}
 }
 
-func (p *testPool) Get(sz int) (*[]byte, error) {
-	return p.pool.Get().(*[]byte), nil
+func (p *testAllocator) Get(sz int) *[]byte {
+	// NOTE: This assumes all entries in the pool are the same, correct size. This
+	// is fine because we are only using these values to benchmark the same data over
+	// and over again.
+	if p.expectedSize != sz {
+		panic("unexpected allocation size in test allocator")
+	}
+
+	bufPtr := p.pool.Get().(*[]byte)
+	return bufPtr
 }
 
-func (p *testPool) Put(b *[]byte) {
+func (p *testAllocator) Put(b *[]byte) {
 	p.pool.Put(b)
 }
