@@ -25,6 +25,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path"
 	"strings"
 	"sync"
 	"testing"
@@ -52,7 +53,7 @@ func TestLocalhost(t *testing.T) {
 
 // Run the memcached binary as a child process and connect to its unix socket.
 func TestUnixSocket(t *testing.T) {
-	sock := fmt.Sprintf("/tmp/test-gomemcache-%d.sock", os.Getpid())
+	sock := path.Join(t.TempDir(), fmt.Sprintf("test-gomemcache-%d.sock", os.Getpid()))
 	cmd := exec.Command("memcached", "-s", sock)
 	if err := cmd.Start(); err != nil {
 		t.Skipf("skipping test; couldn't find memcached")
@@ -90,139 +91,171 @@ func testWithClient(t *testing.T, c *Client) {
 	}
 	mustSet := mustSetF(t, c)
 
-	// Set
-	foo := &Item{Key: "foo", Value: []byte("fooval"), Flags: 123}
-	err := c.Set(foo)
-	checkErr(err, "first set(foo): %v", err)
-	err = c.Set(foo)
-	checkErr(err, "second set(foo): %v", err)
+	t.Run("get and set", func(t *testing.T) {
+		foo := &Item{Key: "foo", Value: []byte("fooval"), Flags: 123}
+		err := c.Set(foo)
+		checkErr(err, "first set(foo): %v", err)
+		err = c.Set(foo)
+		checkErr(err, "second set(foo): %v", err)
 
-	// Get
-	it, err := c.Get("foo")
-	checkErr(err, "get(foo): %v", err)
-	if it.Key != "foo" {
-		t.Errorf("get(foo) Key = %q, want foo", it.Key)
-	}
-	if string(it.Value) != "fooval" {
-		t.Errorf("get(foo) Value = %q, want fooval", string(it.Value))
-	}
-	if it.Flags != 123 {
-		t.Errorf("get(foo) Flags = %v, want 123", it.Flags)
-	}
+		it, err := c.Get("foo")
+		checkErr(err, "get(foo): %v", err)
+		if it.Key != "foo" {
+			t.Errorf("get(foo) Key = %q, want foo", it.Key)
+		}
+		if string(it.Value) != "fooval" {
+			t.Errorf("get(foo) Value = %q, want fooval", string(it.Value))
+		}
+		if it.Flags != 123 {
+			t.Errorf("get(foo) Flags = %v, want 123", it.Flags)
+		}
+	})
 
-	// Get and set a unicode key
-	quxKey := "Hello_世界"
-	qux := &Item{Key: quxKey, Value: []byte("hello world")}
-	err = c.Set(qux)
-	checkErr(err, "first set(Hello_世界): %v", err)
-	it, err = c.Get(quxKey)
-	checkErr(err, "get(Hello_世界): %v", err)
-	if it.Key != quxKey {
-		t.Errorf("get(Hello_世界) Key = %q, want Hello_世界", it.Key)
-	}
-	if string(it.Value) != "hello world" {
-		t.Errorf("get(Hello_世界) Value = %q, want hello world", string(it.Value))
-	}
+	t.Run("get and set unicode key", func(t *testing.T) {
+		quxKey := "Hello_世界"
+		qux := &Item{Key: quxKey, Value: []byte("hello world")}
+		err := c.Set(qux)
+		checkErr(err, "first set(Hello_世界): %v", err)
+		it, err := c.Get(quxKey)
+		checkErr(err, "get(Hello_世界): %v", err)
+		if it.Key != quxKey {
+			t.Errorf("get(Hello_世界) Key = %q, want Hello_世界", it.Key)
+		}
+		if string(it.Value) != "hello world" {
+			t.Errorf("get(Hello_世界) Value = %q, want hello world", string(it.Value))
+		}
+	})
 
-	// Set malformed keys
-	malFormed := &Item{Key: "foo bar", Value: []byte("foobarval")}
-	err = c.Set(malFormed)
-	if err != ErrMalformedKey {
-		t.Errorf("set(foo bar) should return ErrMalformedKey instead of %v", err)
-	}
-	malFormed = &Item{Key: "foo" + string(rune(0x7f)), Value: []byte("foobarval")}
-	err = c.Set(malFormed)
-	if err != ErrMalformedKey {
-		t.Errorf("set(foo<0x7f>) should return ErrMalformedKey instead of %v", err)
-	}
+	t.Run("set malformed keys", func(t *testing.T) {
+		malFormed := &Item{Key: "foo bar", Value: []byte("foobarval")}
+		err := c.Set(malFormed)
+		if err != ErrMalformedKey {
+			t.Errorf("set(foo bar) should return ErrMalformedKey instead of %v", err)
+		}
+		malFormed = &Item{Key: "foo" + string(rune(0x7f)), Value: []byte("foobarval")}
+		err = c.Set(malFormed)
+		if err != ErrMalformedKey {
+			t.Errorf("set(foo<0x7f>) should return ErrMalformedKey instead of %v", err)
+		}
+	})
 
-	// Add
-	bar := &Item{Key: "bar", Value: []byte("barval")}
-	err = c.Add(bar)
-	checkErr(err, "first add(foo): %v", err)
-	if err := c.Add(bar); err != ErrNotStored {
-		t.Fatalf("second add(foo) want ErrNotStored, got %v", err)
-	}
+	t.Run("add", func(t *testing.T) {
+		bar := &Item{Key: "bar", Value: []byte("barval")}
+		err := c.Add(bar)
+		checkErr(err, "first add(foo): %v", err)
+		if err := c.Add(bar); err != ErrNotStored {
+			t.Fatalf("second add(foo) want ErrNotStored, got %v", err)
+		}
+	})
 
-	// Replace
-	baz := &Item{Key: "baz", Value: []byte("bazvalue")}
-	if err := c.Replace(baz); err != ErrNotStored {
-		t.Fatalf("expected replace(baz) to return ErrNotStored, got %v", err)
-	}
-	err = c.Replace(bar)
-	checkErr(err, "replaced(foo): %v", err)
+	t.Run("replace", func(t *testing.T) {
+		baz := &Item{Key: "baz", Value: []byte("bazvalue")}
+		if err := c.Replace(baz); err != ErrNotStored {
+			t.Fatalf("expected replace(baz) to return ErrNotStored, got %v", err)
+		}
 
-	// GetMulti
-	m, err := c.GetMulti([]string{"foo", "bar"})
-	checkErr(err, "GetMulti: %v", err)
-	if g, e := len(m), 2; g != e {
-		t.Errorf("GetMulti: got len(map) = %d, want = %d", g, e)
-	}
-	if _, ok := m["foo"]; !ok {
-		t.Fatalf("GetMulti: didn't get key 'foo'")
-	}
-	if _, ok := m["bar"]; !ok {
-		t.Fatalf("GetMulti: didn't get key 'bar'")
-	}
-	if g, e := string(m["foo"].Value), "fooval"; g != e {
-		t.Errorf("GetMulti: foo: got %q, want %q", g, e)
-	}
-	if g, e := string(m["bar"].Value), "barval"; g != e {
-		t.Errorf("GetMulti: bar: got %q, want %q", g, e)
-	}
+		bar := &Item{Key: "bar", Value: []byte("barval")}
+		err := c.Replace(bar)
+		checkErr(err, "replaced(foo): %v", err)
+	})
 
-	// Delete
-	err = c.Delete("foo")
-	checkErr(err, "Delete: %v", err)
-	_, err = c.Get("foo")
-	if err != ErrCacheMiss {
-		t.Errorf("post-Delete want ErrCacheMiss, got %v", err)
-	}
+	t.Run("getmulti", func(t *testing.T) {
+		m, err := c.GetMulti([]string{"foo", "bar"})
+		checkErr(err, "GetMulti: %v", err)
+		if g, e := len(m), 2; g != e {
+			t.Errorf("GetMulti: got len(map) = %d, want = %d", g, e)
+		}
+		if _, ok := m["foo"]; !ok {
+			t.Fatalf("GetMulti: didn't get key 'foo'")
+		}
+		if _, ok := m["bar"]; !ok {
+			t.Fatalf("GetMulti: didn't get key 'bar'")
+		}
+		if g, e := string(m["foo"].Value), "fooval"; g != e {
+			t.Errorf("GetMulti: foo: got %q, want %q", g, e)
+		}
+		if g, e := string(m["bar"].Value), "barval"; g != e {
+			t.Errorf("GetMulti: bar: got %q, want %q", g, e)
+		}
+	})
 
-	// Incr/Decr
-	mustSet(&Item{Key: "num", Value: []byte("42")})
-	n, err := c.Increment("num", 8)
-	checkErr(err, "Increment num + 8: %v", err)
-	if n != 50 {
-		t.Fatalf("Increment num + 8: want=50, got=%d", n)
-	}
-	n, err = c.Decrement("num", 49)
-	checkErr(err, "Decrement: %v", err)
-	if n != 1 {
-		t.Fatalf("Decrement 49: want=1, got=%d", n)
-	}
-	err = c.Delete("num")
-	checkErr(err, "delete num: %v", err)
-	_, err = c.Increment("num", 1)
-	if err != ErrCacheMiss {
-		t.Fatalf("increment post-delete: want ErrCacheMiss, got %v", err)
-	}
-	mustSet(&Item{Key: "num", Value: []byte("not-numeric")})
-	_, err = c.Increment("num", 1)
-	if err == nil || !strings.Contains(err.Error(), "client error") {
-		t.Fatalf("increment non-number: want client error, got %v", err)
-	}
-	testTouchWithClient(t, c)
+	t.Run("delete", func(t *testing.T) {
+		err := c.Delete("foo")
+		checkErr(err, "Delete: %v", err)
+		_, err = c.Get("foo")
+		if err != ErrCacheMiss {
+			t.Errorf("post-Delete want ErrCacheMiss, got %v", err)
+		}
+	})
 
-	// Test Delete All
-	err = c.DeleteAll()
-	checkErr(err, "DeleteAll: %v", err)
-	_, err = c.Get("bar")
-	if err != ErrCacheMiss {
-		t.Errorf("post-DeleteAll want ErrCacheMiss, got %v", err)
-	}
+	t.Run("incr decr", func(t *testing.T) {
+		mustSet(&Item{Key: "num", Value: []byte("42")})
+		n, err := c.Increment("num", 8)
+		checkErr(err, "Increment num + 8: %v", err)
+		if n != 50 {
+			t.Fatalf("Increment num + 8: want=50, got=%d", n)
+		}
+		n, err = c.Decrement("num", 49)
+		checkErr(err, "Decrement: %v", err)
+		if n != 1 {
+			t.Fatalf("Decrement 49: want=1, got=%d", n)
+		}
+		err = c.Delete("num")
+		checkErr(err, "delete num: %v", err)
+		_, err = c.Increment("num", 1)
+		if err != ErrCacheMiss {
+			t.Fatalf("increment post-delete: want ErrCacheMiss, got %v", err)
+		}
+		mustSet(&Item{Key: "num", Value: []byte("not-numeric")})
+		_, err = c.Increment("num", 1)
+		if err == nil || !strings.Contains(err.Error(), "client error") {
+			t.Fatalf("increment non-number: want client error, got %v", err)
+		}
+	})
 
-	// Test Ping
-	err = c.Ping()
-	checkErr(err, "error ping: %s", err)
+	t.Run("delete all", func(t *testing.T) {
+		err := c.DeleteAll()
+		checkErr(err, "DeleteAll: %v", err)
+		_, err = c.Get("bar")
+		if err != ErrCacheMiss {
+			t.Errorf("post-DeleteAll want ErrCacheMiss, got %v", err)
+		}
+	})
+
+	t.Run("ping", func(t *testing.T) {
+		err := c.Ping()
+		checkErr(err, "error ping: %s", err)
+	})
+
+	t.Run("touch", func(t *testing.T) {
+		testTouchWithClient(t, c)
+	})
+
+	t.Run("get with allocator", func(t *testing.T) {
+		foo := &Item{Key: "foo", Value: []byte("fooval"), Flags: 123}
+		err := c.Set(foo)
+		checkErr(err, "first set(foo): %v", err)
+
+		alloc := newTestAllocator(len(foo.Value) + 2)
+		it, err := c.Get("foo", WithAllocator(alloc))
+		checkErr(err, "get(foo): %v", err)
+		t.Cleanup(func() {
+			alloc.Put(&it.Value)
+		})
+
+		if it.Key != "foo" {
+			t.Errorf("get(foo) Key = %q, want foo", it.Key)
+		}
+		if string(it.Value) != "fooval" {
+			t.Errorf("get(foo) Value = %q, want fooval", string(it.Value))
+		}
+		if alloc.numGets != 1 {
+			t.Errorf("get(foo) num gets from Allocator = %d, want 1", alloc.numGets)
+		}
+	})
 }
 
 func testTouchWithClient(t *testing.T, c *Client) {
-	if testing.Short() {
-		t.Log("Skipping testing memcache Touch with testing in Short mode")
-		return
-	}
-
 	mustSet := mustSetF(t, c)
 
 	const secondsToExpiry = int32(2)
@@ -238,7 +271,7 @@ func testTouchWithClient(t *testing.T, c *Client) {
 	mustSet(bar)
 
 	for s := 0; s < 3; s++ {
-		time.Sleep(time.Duration(1 * time.Second))
+		time.Sleep(1 * time.Second)
 		err := c.Touch(foo.Key, secondsToExpiry)
 		if nil != err {
 			t.Errorf("error touching foo: %v", err.Error())
@@ -330,16 +363,18 @@ func BenchmarkParseGetResponse(b *testing.B) {
 }
 
 type testAllocator struct {
-	pool         sync.Pool
-	expectedSize int
+	pool    sync.Pool
+	maxSize int
+	numGets int
+	numPuts int
 }
 
-func newTestAllocator(dataSize int) Allocator {
+func newTestAllocator(maxSize int) *testAllocator {
 	return &testAllocator{
-		expectedSize: dataSize,
+		maxSize: maxSize,
 		pool: sync.Pool{
 			New: func() interface{} {
-				b := make([]byte, dataSize)
+				b := make([]byte, maxSize)
 				return &b
 			},
 		},
@@ -347,17 +382,16 @@ func newTestAllocator(dataSize int) Allocator {
 }
 
 func (p *testAllocator) Get(sz int) *[]byte {
-	// NOTE: This assumes all entries in the pool are the same, correct size. This
-	// is fine because we are only using these values to benchmark the same data over
-	// and over again.
-	if p.expectedSize != sz {
+	if sz > p.maxSize {
 		panic("unexpected allocation size in test allocator")
 	}
 
+	p.numGets += 1
 	bufPtr := p.pool.Get().(*[]byte)
 	return bufPtr
 }
 
 func (p *testAllocator) Put(b *[]byte) {
+	p.numPuts += 1
 	p.pool.Put(b)
 }

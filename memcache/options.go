@@ -33,7 +33,7 @@ func WithAllocator(alloc Allocator) Option {
 	}
 }
 
-// Allocator allows memory for memcached result values (Item.Value) to managed by
+// Allocator allows memory for memcached result values (Item.Value) to be managed by
 // callers of the Client instead of by the Client itself. For example, this can be
 // used by callers to implement arena-style memory management. The default implementation
 // used, when not otherwise overridden, uses `make` and relies on GC for cleanup.
