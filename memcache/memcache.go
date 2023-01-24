@@ -731,3 +731,24 @@ func (c *Client) incrDecr(verb, key string, delta uint64) (uint64, error) {
 	})
 	return val, err
 }
+
+// Close closes any open connections.
+//
+// It returns the first error encountered closing connections, but always
+// closes all connections.
+//
+// After Close, the Client may still be used.
+func (c *Client) Close() error {
+	c.lk.Lock()
+	defer c.lk.Unlock()
+	var ret error
+	for _, conns := range c.freeconn {
+		for _, c := range conns {
+			if err := c.nc.Close(); err != nil && ret == nil {
+				ret = err
+			}
+		}
+	}
+	c.freeconn = nil
+	return ret
+}
