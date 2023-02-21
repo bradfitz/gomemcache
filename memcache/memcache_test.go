@@ -506,6 +506,14 @@ func TestClient_releaseIdleConnections(t *testing.T) {
 	})
 }
 
+func TestClient_Close_ShouldBeIdempotent(t *testing.T) {
+	c := New(testServer)
+
+	// Call Close twice and make sure it doesn't panic the 2nd time.
+	c.Close()
+	c.Close()
+}
+
 func BenchmarkOnItem(b *testing.B) {
 	fakeServer, err := net.Listen("tcp", "localhost:0")
 	if err != nil {

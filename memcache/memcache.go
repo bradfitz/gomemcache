@@ -176,7 +176,8 @@ type Client struct {
 
 	// closed channel gets closed once the Client.Close() is called. Once closed,
 	// resources should be released.
-	closed chan struct{}
+	closed    chan struct{}
+	closeOnce sync.Once
 
 	selector ServerSelector
 
@@ -287,7 +288,9 @@ func (c *Client) maxIdleConns() int {
 }
 
 func (c *Client) Close() {
-	close(c.closed)
+	c.closeOnce.Do(func() {
+		close(c.closed)
+	})
 }
 
 func (c *Client) releaseIdleConnectionsUntilClosed() {
