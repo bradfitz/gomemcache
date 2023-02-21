@@ -212,8 +212,8 @@ type conn struct {
 	addr net.Addr
 	c    *Client
 
-	// The timestamp since when this connection is idle. This is used to gradually
-	// close idle connections over time.
+	// The timestamp since when this connection is idle. This is used to close
+	// idle connections.
 	idleSince time.Time
 }
 
