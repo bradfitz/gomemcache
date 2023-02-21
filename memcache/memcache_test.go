@@ -504,6 +504,31 @@ func TestClient_releaseIdleConnections(t *testing.T) {
 			t.Fatalf("expected %d idle connections but got %d", 2, numIdle)
 		}
 	})
+
+	t.Run("should keep all idle connections open if the computed headroom is greater than the number of available free connections", func(t *testing.T) {
+		c := getClientWithMinIdleConnsHeadroomPercentage(t, 1000)
+
+		conn1 := getConn(c)
+		conn2 := getConn(c)
+		conn3 := getConn(c)
+		conn4 := getConn(c)
+
+		conn1.release()
+		conn2.release()
+		conn3.release()
+		time.Sleep(recentlyUsedThreshold)
+		conn4.release()
+
+		c.releaseIdleConnections()
+
+		numRecentlyUsed, numIdle := countFreeConns(c)
+		if numRecentlyUsed != 1 {
+			t.Fatalf("expected %d recently used connections but got %d", 1, numRecentlyUsed)
+		}
+		if numIdle != 3 {
+			t.Fatalf("expected %d idle connections but got %d", 3, numIdle)
+		}
+	})
 }
 
 func TestClient_Close_ShouldBeIdempotent(t *testing.T) {
