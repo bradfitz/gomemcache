@@ -335,7 +335,7 @@ func (c *Client) releaseIdleConnections() {
 		// the configured headroom.
 		numRecentlyUsed := len(freeConnections) - numIdle
 		numIdleToKeep := int(math.Max(0, math.Ceil(float64(numRecentlyUsed)*minIdleHeadroomPercentage/100)))
-		numIdleToClose := len(freeConnections) - numRecentlyUsed - numIdleToKeep
+		numIdleToClose := numIdle - numIdleToKeep
 		if numIdleToClose <= 0 {
 			continue
 		}
