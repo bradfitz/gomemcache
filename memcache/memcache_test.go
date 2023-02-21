@@ -307,10 +307,10 @@ func testTouchWithClient(t *testing.T, c *Client) {
 func TestClient_releaseIdleConnections(t *testing.T) {
 	const recentlyUsedThreshold = 2 * time.Second
 
-	getClientWithMinIdleConnsHeadroom := func(t *testing.T, headroom float64) *Client {
+	getClientWithMinIdleConnsHeadroomPercentage := func(t *testing.T, headroomPercentage float64) *Client {
 		c := New(testServer)
 		t.Cleanup(c.Close)
-		c.MinIdleConnsHeadroom = headroom
+		c.MinIdleConnsHeadroomPercentage = headroomPercentage
 		c.MaxIdleConns = 100
 		c.recentlyUsedConnsThreshold = recentlyUsedThreshold
 
@@ -349,7 +349,7 @@ func TestClient_releaseIdleConnections(t *testing.T) {
 	}
 
 	t.Run("noop if there are no free connections", func(t *testing.T) {
-		c := getClientWithMinIdleConnsHeadroom(t, 0.5)
+		c := getClientWithMinIdleConnsHeadroomPercentage(t, 50)
 		c.releaseIdleConnections()
 
 		numRecentlyUsed, numIdle := countFreeConns(c)
@@ -362,7 +362,7 @@ func TestClient_releaseIdleConnections(t *testing.T) {
 	})
 
 	t.Run("should not release recently used connections", func(t *testing.T) {
-		c := getClientWithMinIdleConnsHeadroom(t, 0.5)
+		c := getClientWithMinIdleConnsHeadroomPercentage(t, 50)
 
 		conn1 := getConn(c)
 		conn2 := getConn(c)
@@ -381,7 +381,7 @@ func TestClient_releaseIdleConnections(t *testing.T) {
 	})
 
 	t.Run("should release idle connections while honoring the configured headroom", func(t *testing.T) {
-		c := getClientWithMinIdleConnsHeadroom(t, 0.5)
+		c := getClientWithMinIdleConnsHeadroomPercentage(t, 50)
 
 		conn1 := getConn(c)
 		conn2 := getConn(c)
@@ -405,8 +405,33 @@ func TestClient_releaseIdleConnections(t *testing.T) {
 		}
 	})
 
-	t.Run("should not release idle connections if headroom is disabled (zero)", func(t *testing.T) {
-		c := getClientWithMinIdleConnsHeadroom(t, 0)
+	t.Run("should release all idle connections if headroom is zero", func(t *testing.T) {
+		c := getClientWithMinIdleConnsHeadroomPercentage(t, 0)
+
+		conn1 := getConn(c)
+		conn2 := getConn(c)
+		conn3 := getConn(c)
+		conn4 := getConn(c)
+
+		conn1.release()
+		conn2.release()
+		time.Sleep(recentlyUsedThreshold)
+		conn3.release()
+		conn4.release()
+
+		c.releaseIdleConnections()
+
+		numRecentlyUsed, numIdle := countFreeConns(c)
+		if numRecentlyUsed != 2 {
+			t.Fatalf("expected %d recently used connections but got %d", 2, numRecentlyUsed)
+		}
+		if numIdle != 0 {
+			t.Fatalf("expected %d idle connections but got %d", 0, numIdle)
+		}
+	})
+
+	t.Run("should not release idle connections if headroom is disabled (negative value)", func(t *testing.T) {
+		c := getClientWithMinIdleConnsHeadroomPercentage(t, -1)
 
 		conn1 := getConn(c)
 		conn2 := getConn(c)
@@ -431,7 +456,7 @@ func TestClient_releaseIdleConnections(t *testing.T) {
 	})
 
 	t.Run("should not release idle connections if headroom is 100%", func(t *testing.T) {
-		c := getClientWithMinIdleConnsHeadroom(t, 1)
+		c := getClientWithMinIdleConnsHeadroomPercentage(t, 100)
 
 		conn1 := getConn(c)
 		conn2 := getConn(c)
@@ -449,6 +474,31 @@ func TestClient_releaseIdleConnections(t *testing.T) {
 		numRecentlyUsed, numIdle := countFreeConns(c)
 		if numRecentlyUsed != 2 {
 			t.Fatalf("expected %d recently used connections but got %d", 2, numRecentlyUsed)
+		}
+		if numIdle != 2 {
+			t.Fatalf("expected %d idle connections but got %d", 2, numIdle)
+		}
+	})
+
+	t.Run("should allow to set an headroom percentage > 100%", func(t *testing.T) {
+		c := getClientWithMinIdleConnsHeadroomPercentage(t, 200)
+
+		conn1 := getConn(c)
+		conn2 := getConn(c)
+		conn3 := getConn(c)
+		conn4 := getConn(c)
+
+		conn1.release()
+		conn2.release()
+		conn3.release()
+		time.Sleep(recentlyUsedThreshold)
+		conn4.release()
+
+		c.releaseIdleConnections()
+
+		numRecentlyUsed, numIdle := countFreeConns(c)
+		if numRecentlyUsed != 1 {
+			t.Fatalf("expected %d recently used connections but got %d", 1, numRecentlyUsed)
 		}
 		if numIdle != 2 {
 			t.Fatalf("expected %d idle connections but got %d", 2, numIdle)

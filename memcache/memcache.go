@@ -151,13 +151,13 @@ type Client struct {
 	// If zero, DefaultTimeout is used.
 	Timeout time.Duration
 
-	// MinIdleConnsHeadroom specifies the percentage of minimum number of idle connections
+	// MinIdleConnsHeadroomPercentage specifies the percentage of minimum number of idle connections
 	// that should be kept open, compared to the number of recently used connections.
 	// If there are idle connections but none of them has been recently used, then all idle
 	// connections get closed.
 	//
-	// If the configured value is 0, idle connections are never closed.
-	MinIdleConnsHeadroom float64
+	// If the configured value is negative, idle connections are never closed.
+	MinIdleConnsHeadroomPercentage float64
 
 	// MaxIdleConns specifies the maximum number of idle connections that will
 	// be maintained per address. If less than one, DefaultMaxIdleConns will be
@@ -279,14 +279,6 @@ func (c *Client) netTimeout() time.Duration {
 	return DefaultTimeout
 }
 
-func (c *Client) minIdleConnsHeadroom() float64 {
-	if c.MinIdleConnsHeadroom < 0 || c.MinIdleConnsHeadroom >= 1 {
-		return 0
-	}
-
-	return c.MinIdleConnsHeadroom
-}
-
 func (c *Client) maxIdleConns() int {
 	if c.MaxIdleConns > 0 {
 		return c.MaxIdleConns
@@ -312,9 +304,9 @@ func (c *Client) releaseIdleConnectionsUntilClosed() {
 func (c *Client) releaseIdleConnections() {
 	var toClose []io.Closer
 
-	// Nothing to do if min idle connections headroom is disabled (zero value).
-	minIdleHeadroom := c.minIdleConnsHeadroom()
-	if minIdleHeadroom <= 0 {
+	// Nothing to do if min idle connections headroom is disabled (negative value).
+	minIdleHeadroomPercentage := c.MinIdleConnsHeadroomPercentage
+	if minIdleHeadroomPercentage < 0 {
 		return
 	}
 
@@ -339,11 +331,10 @@ func (c *Client) releaseIdleConnections() {
 			numIdle++
 		}
 
-		// Compute the number of connections to close, honoring two properties:
-		// 1. Keep a number of idle connections equal to the configured headroom.
-		// 2. Keep at least 1 idle connection.
+		// Compute the number of connections to close. It keeps a number of idle connections equal to
+		// the configured headroom.
 		numRecentlyUsed := len(freeConnections) - numIdle
-		numIdleToKeep := int(math.Max(1, math.Ceil(float64(numRecentlyUsed)*minIdleHeadroom)))
+		numIdleToKeep := int(math.Max(0, math.Ceil(float64(numRecentlyUsed)*minIdleHeadroomPercentage/100)))
 		numIdleToClose := len(freeConnections) - numRecentlyUsed - numIdleToKeep
 		if numIdleToClose <= 0 {
 			continue
