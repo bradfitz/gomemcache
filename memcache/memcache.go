@@ -152,7 +152,7 @@ type Client struct {
 	Timeout time.Duration
 
 	// MinIdleConnsHeadroomPercentage specifies the percentage of minimum number of idle connections
-	// that should be kept open, compared to the number of recently used connections.
+	// that should be kept open, compared to the number of free but recently used connections.
 	// If there are idle connections but none of them has been recently used, then all idle
 	// connections get closed.
 	//
