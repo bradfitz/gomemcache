@@ -48,7 +48,11 @@ func TestLocalhost(t *testing.T) {
 	if !setup(t) {
 		return
 	}
-	testWithClient(t, New(testServer))
+
+	c := New(testServer)
+	t.Cleanup(c.Close)
+
+	testWithClient(t, c)
 }
 
 // Run the memcached binary as a child process and connect to its unix socket.
@@ -72,7 +76,10 @@ func TestUnixSocket(t *testing.T) {
 		time.Sleep(time.Duration(25*i) * time.Millisecond)
 	}
 
-	testWithClient(t, New(sock))
+	c := New(sock)
+	t.Cleanup(c.Close)
+
+	testWithClient(t, c)
 }
 
 func mustSetF(t *testing.T, c *Client) func(*Item) {
@@ -297,6 +304,241 @@ func testTouchWithClient(t *testing.T, c *Client) {
 	}
 }
 
+func TestClient_releaseIdleConnections(t *testing.T) {
+	const recentlyUsedThreshold = 2 * time.Second
+
+	getClientWithMinIdleConnsHeadroomPercentage := func(t *testing.T, headroomPercentage float64) *Client {
+		c := New(testServer)
+		t.Cleanup(c.Close)
+		c.MinIdleConnsHeadroomPercentage = headroomPercentage
+		c.MaxIdleConns = 100
+		c.recentlyUsedConnsThreshold = recentlyUsedThreshold
+
+		return c
+	}
+
+	getConn := func(c *Client) *conn {
+		addr, err := c.selector.PickServer("test")
+		if err != nil {
+			t.Fatalf("unexpected error picking server: %v", err.Error())
+		}
+
+		connection, err := c.getConn(addr)
+		if err != nil {
+			t.Fatalf("unexpected error getting connection: %v", err.Error())
+		}
+
+		return connection
+	}
+
+	countFreeConns := func(c *Client) (recentlyUsed, idle int) {
+		c.lk.Lock()
+		defer c.lk.Unlock()
+
+		for _, freeConnections := range c.freeconn {
+			for _, freeConn := range freeConnections {
+				if time.Since(freeConn.idleSince) >= c.recentlyUsedConnsThreshold {
+					idle++
+				} else {
+					recentlyUsed++
+				}
+			}
+		}
+
+		return
+	}
+
+	t.Run("noop if there are no free connections", func(t *testing.T) {
+		c := getClientWithMinIdleConnsHeadroomPercentage(t, 50)
+		c.releaseIdleConnections()
+
+		numRecentlyUsed, numIdle := countFreeConns(c)
+		if numRecentlyUsed != 0 {
+			t.Fatalf("expected %d recently used connections but got %d", 0, numRecentlyUsed)
+		}
+		if numIdle != 0 {
+			t.Fatalf("expected %d idle connections but got %d", 0, numIdle)
+		}
+	})
+
+	t.Run("should not release recently used connections", func(t *testing.T) {
+		c := getClientWithMinIdleConnsHeadroomPercentage(t, 50)
+
+		conn1 := getConn(c)
+		conn2 := getConn(c)
+		conn1.release()
+		conn2.release()
+
+		c.releaseIdleConnections()
+
+		numRecentlyUsed, numIdle := countFreeConns(c)
+		if numRecentlyUsed != 2 {
+			t.Fatalf("expected %d recently used connections but got %d", 2, numRecentlyUsed)
+		}
+		if numIdle != 0 {
+			t.Fatalf("expected %d idle connections but got %d", 0, numIdle)
+		}
+	})
+
+	t.Run("should release idle connections while honoring the configured headroom", func(t *testing.T) {
+		c := getClientWithMinIdleConnsHeadroomPercentage(t, 50)
+
+		conn1 := getConn(c)
+		conn2 := getConn(c)
+		conn3 := getConn(c)
+		conn4 := getConn(c)
+
+		conn1.release()
+		conn2.release()
+		time.Sleep(recentlyUsedThreshold)
+		conn3.release()
+		conn4.release()
+
+		c.releaseIdleConnections()
+
+		numRecentlyUsed, numIdle := countFreeConns(c)
+		if numRecentlyUsed != 2 {
+			t.Fatalf("expected %d recently used connections but got %d", 2, numRecentlyUsed)
+		}
+		if numIdle != 1 {
+			t.Fatalf("expected %d idle connections but got %d", 1, numIdle)
+		}
+	})
+
+	t.Run("should release all idle connections if headroom is zero", func(t *testing.T) {
+		c := getClientWithMinIdleConnsHeadroomPercentage(t, 0)
+
+		conn1 := getConn(c)
+		conn2 := getConn(c)
+		conn3 := getConn(c)
+		conn4 := getConn(c)
+
+		conn1.release()
+		conn2.release()
+		time.Sleep(recentlyUsedThreshold)
+		conn3.release()
+		conn4.release()
+
+		c.releaseIdleConnections()
+
+		numRecentlyUsed, numIdle := countFreeConns(c)
+		if numRecentlyUsed != 2 {
+			t.Fatalf("expected %d recently used connections but got %d", 2, numRecentlyUsed)
+		}
+		if numIdle != 0 {
+			t.Fatalf("expected %d idle connections but got %d", 0, numIdle)
+		}
+	})
+
+	t.Run("should not release idle connections if headroom is disabled (negative value)", func(t *testing.T) {
+		c := getClientWithMinIdleConnsHeadroomPercentage(t, -1)
+
+		conn1 := getConn(c)
+		conn2 := getConn(c)
+		conn3 := getConn(c)
+		conn4 := getConn(c)
+
+		conn1.release()
+		conn2.release()
+		time.Sleep(recentlyUsedThreshold)
+		conn3.release()
+		conn4.release()
+
+		c.releaseIdleConnections()
+
+		numRecentlyUsed, numIdle := countFreeConns(c)
+		if numRecentlyUsed != 2 {
+			t.Fatalf("expected %d recently used connections but got %d", 2, numRecentlyUsed)
+		}
+		if numIdle != 2 {
+			t.Fatalf("expected %d idle connections but got %d", 2, numIdle)
+		}
+	})
+
+	t.Run("should not release idle connections if headroom is 100%", func(t *testing.T) {
+		c := getClientWithMinIdleConnsHeadroomPercentage(t, 100)
+
+		conn1 := getConn(c)
+		conn2 := getConn(c)
+		conn3 := getConn(c)
+		conn4 := getConn(c)
+
+		conn1.release()
+		conn2.release()
+		time.Sleep(recentlyUsedThreshold)
+		conn3.release()
+		conn4.release()
+
+		c.releaseIdleConnections()
+
+		numRecentlyUsed, numIdle := countFreeConns(c)
+		if numRecentlyUsed != 2 {
+			t.Fatalf("expected %d recently used connections but got %d", 2, numRecentlyUsed)
+		}
+		if numIdle != 2 {
+			t.Fatalf("expected %d idle connections but got %d", 2, numIdle)
+		}
+	})
+
+	t.Run("should allow to set an headroom percentage > 100%", func(t *testing.T) {
+		c := getClientWithMinIdleConnsHeadroomPercentage(t, 200)
+
+		conn1 := getConn(c)
+		conn2 := getConn(c)
+		conn3 := getConn(c)
+		conn4 := getConn(c)
+
+		conn1.release()
+		conn2.release()
+		conn3.release()
+		time.Sleep(recentlyUsedThreshold)
+		conn4.release()
+
+		c.releaseIdleConnections()
+
+		numRecentlyUsed, numIdle := countFreeConns(c)
+		if numRecentlyUsed != 1 {
+			t.Fatalf("expected %d recently used connections but got %d", 1, numRecentlyUsed)
+		}
+		if numIdle != 2 {
+			t.Fatalf("expected %d idle connections but got %d", 2, numIdle)
+		}
+	})
+
+	t.Run("should keep all idle connections open if the computed headroom is greater than the number of available free connections", func(t *testing.T) {
+		c := getClientWithMinIdleConnsHeadroomPercentage(t, 1000)
+
+		conn1 := getConn(c)
+		conn2 := getConn(c)
+		conn3 := getConn(c)
+		conn4 := getConn(c)
+
+		conn1.release()
+		conn2.release()
+		conn3.release()
+		time.Sleep(recentlyUsedThreshold)
+		conn4.release()
+
+		c.releaseIdleConnections()
+
+		numRecentlyUsed, numIdle := countFreeConns(c)
+		if numRecentlyUsed != 1 {
+			t.Fatalf("expected %d recently used connections but got %d", 1, numRecentlyUsed)
+		}
+		if numIdle != 3 {
+			t.Fatalf("expected %d idle connections but got %d", 3, numIdle)
+		}
+	})
+}
+
+func TestClient_Close_ShouldBeIdempotent(t *testing.T) {
+	c := New(testServer)
+
+	// Call Close twice and make sure it doesn't panic the 2nd time.
+	c.Close()
+	c.Close()
+}
+
 func BenchmarkOnItem(b *testing.B) {
 	fakeServer, err := net.Listen("tcp", "localhost:0")
 	if err != nil {
@@ -315,6 +557,8 @@ func BenchmarkOnItem(b *testing.B) {
 
 	addr := fakeServer.Addr()
 	c := New(addr.String())
+	b.Cleanup(c.Close)
+
 	if _, err := c.getConn(addr); err != nil {
 		b.Fatal("failed to initialize connection to fake server")
 	}
