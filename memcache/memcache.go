@@ -130,22 +130,17 @@ var (
 // New returns a memcache client using the provided server(s)
 // with equal weight. If a server is listed multiple times,
 // it gets a proportional amount of weight.
-func New(r prometheus.Registerer, server ...string) *Client {
+func New(server ...string) *Client {
 	ss := new(ServerList)
 	_ = ss.SetServers(server...)
-	return NewFromSelector(r, ss)
+	return NewFromSelector(ss)
 }
 
 // NewFromSelector returns a new Client using the provided ServerSelector.
-func NewFromSelector(r prometheus.Registerer, ss ServerSelector) *Client {
+func NewFromSelector(ss ServerSelector) *Client {
 	c := &Client{
 		selector: ss,
 		closed:   make(chan struct{}),
-		requestDuration: promauto.With(r).NewHistogramVec(prometheus.HistogramOpts{
-			Name:    "gomemcache_request_duration_seconds",
-			Help:    "Total time spent in seconds doing cache requests.",
-			Buckets: prometheus.ExponentialBuckets(0.000016, 4, 8),
-		}, []string{"method", "status_code", "address"}),
 	}
 
 	go c.releaseIdleConnectionsUntilClosed()
@@ -442,14 +437,16 @@ func (c *Client) onItem(item *Item, operation string, fn func(*Client, *bufio.Re
 	}
 	defer cn.condRelease(&err)
 
-	start := time.Now()
-	defer func() {
-		status := "success"
-		if err != nil {
-			status = "failed"
-		}
-		c.requestDuration.WithLabelValues(operation, status, addr.String()).Observe(float64(time.Since(start).Seconds()))
-	}()
+	if c.requestDuration != nil {
+		start := time.Now()
+		defer func() {
+			status := "success"
+			if err != nil {
+				status = "failed"
+			}
+			c.requestDuration.WithLabelValues(operation, status, addr.String()).Observe(float64(time.Since(start).Seconds()))
+		}()
+	}
 
 	if err = fn(c, cn.rw, item); err != nil {
 		return err
@@ -494,14 +491,16 @@ func (c *Client) withKeyAddr(key, operation string, fn func(net.Addr) error) (er
 		return err
 	}
 
-	start := time.Now()
-	defer func() {
-		status := "success"
-		if err != nil {
-			status = "failed"
-		}
-		c.requestDuration.WithLabelValues(operation, status, addr.String()).Observe(float64(time.Since(start).Seconds()))
-	}()
+	if c.requestDuration != nil {
+		start := time.Now()
+		defer func() {
+			status := "success"
+			if err != nil {
+				status = "failed"
+			}
+			c.requestDuration.WithLabelValues(operation, status, addr.String()).Observe(float64(time.Since(start).Seconds()))
+		}()
+	}
 
 	return fn(addr)
 }
@@ -640,13 +639,16 @@ func (c *Client) GetMulti(keys []string, opts ...Option) (map[string]*Item, erro
 	for addr, keys := range keyMap {
 		go func(addr net.Addr, keys []string) {
 			start := time.Now()
-			status := "success"
 			err := c.getFromAddr(addr, keys, options, addItemToMap)
-			if err != nil {
-				status = "failed"
+
+			if c.requestDuration != nil {
+				status := "success"
+				if err != nil {
+					status = "failed"
+				}
+				c.requestDuration.WithLabelValues("get", status, addr.String()).Observe(float64(time.Since(start).Seconds()))
 			}
 
-			c.requestDuration.WithLabelValues("get", status, addr.String()).Observe(float64(time.Since(start).Seconds()))
 			ch <- err
 		}(addr, keys)
 	}
@@ -919,4 +921,17 @@ func (c *Client) incrDecr(verb, key string, delta uint64) (uint64, error) {
 		return nil
 	})
 	return val, err
+}
+
+func (c *Client) InstrumentRequestDuration(r prometheus.Registerer, buckets []float64) {
+	if buckets == nil {
+		// 16us to 1s
+		buckets = prometheus.ExponentialBuckets(0.000016, 4, 8)
+	}
+
+	c.requestDuration = promauto.With(r).NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "gomemcache_request_duration_seconds",
+		Help:    "Total time spent in seconds doing cache requests.",
+		Buckets: buckets,
+	}, []string{"method", "status", "address"})
 }

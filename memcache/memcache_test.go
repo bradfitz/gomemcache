@@ -30,8 +30,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/prometheus/client_golang/prometheus"
 )
 
 const testServer = "localhost:11211"
@@ -51,7 +49,7 @@ func TestLocalhost(t *testing.T) {
 		return
 	}
 
-	c := New(prometheus.DefaultRegisterer, testServer)
+	c := New(testServer)
 	t.Cleanup(c.Close)
 
 	testWithClient(t, c)
@@ -78,7 +76,7 @@ func TestUnixSocket(t *testing.T) {
 		time.Sleep(time.Duration(25*i) * time.Millisecond)
 	}
 
-	c := New(prometheus.DefaultRegisterer, sock)
+	c := New(sock)
 	t.Cleanup(c.Close)
 
 	testWithClient(t, c)
@@ -310,7 +308,7 @@ func TestClient_releaseIdleConnections(t *testing.T) {
 	const recentlyUsedThreshold = 2 * time.Second
 
 	getClientWithMinIdleConnsHeadroomPercentage := func(t *testing.T, headroomPercentage float64) *Client {
-		c := New(prometheus.DefaultRegisterer, testServer)
+		c := New(testServer)
 		t.Cleanup(c.Close)
 		c.MinIdleConnsHeadroomPercentage = headroomPercentage
 		c.MaxIdleConns = 100
@@ -534,7 +532,7 @@ func TestClient_releaseIdleConnections(t *testing.T) {
 }
 
 func TestClient_Close_ShouldBeIdempotent(t *testing.T) {
-	c := New(prometheus.DefaultRegisterer, testServer)
+	c := New(testServer)
 
 	// Call Close twice and make sure it doesn't panic the 2nd time.
 	c.Close()
@@ -558,7 +556,7 @@ func BenchmarkOnItem(b *testing.B) {
 	}()
 
 	addr := fakeServer.Addr()
-	c := New(prometheus.DefaultRegisterer, addr.String())
+	c := New(addr.String())
 	b.Cleanup(c.Close)
 
 	if _, err := c.getConn(addr); err != nil {
