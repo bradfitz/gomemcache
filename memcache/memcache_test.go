@@ -127,7 +127,7 @@ func testWithClient(t *testing.T, c *Client) {
 	if err != ErrMalformedKey {
 		t.Errorf("set(foo bar) should return ErrMalformedKey instead of %v", err)
 	}
-	malFormed = &Item{Key: "foo" + string(0x7f), Value: []byte("foobarval")}
+	malFormed = &Item{Key: "foo" + string(rune(0x7f)), Value: []byte("foobarval")}
 	err = c.Set(malFormed)
 	if err != ErrMalformedKey {
 		t.Errorf("set(foo<0x7f>) should return ErrMalformedKey instead of %v", err)
@@ -139,6 +139,34 @@ func testWithClient(t *testing.T, c *Client) {
 	checkErr(err, "first add(foo): %v", err)
 	if err := c.Add(bar); err != ErrNotStored {
 		t.Fatalf("second add(foo) want ErrNotStored, got %v", err)
+	}
+
+	// Append
+	append := &Item{Key: "append", Value: []byte("appendval")}
+	if err := c.Append(append); err != ErrNotStored {
+		t.Fatalf("first append(append) want ErrNotStored, got %v", err)
+	}
+	c.Set(append)
+	err = c.Append(&Item{Key: "append", Value: []byte("1")})
+	checkErr(err, "second append(append): %v", err)
+	appended, err := c.Get("append")
+	checkErr(err, "third append(append): %v", err)
+	if string(appended.Value) != string(append.Value)+"1" {
+		t.Fatalf("Append: want=append1, got=%s", string(appended.Value))
+	}
+
+	// Prepend
+	prepend := &Item{Key: "prepend", Value: []byte("prependval")}
+	if err := c.Prepend(prepend); err != ErrNotStored {
+		t.Fatalf("first prepend(prepend) want ErrNotStored, got %v", err)
+	}
+	c.Set(prepend)
+	err = c.Prepend(&Item{Key: "prepend", Value: []byte("1")})
+	checkErr(err, "second prepend(prepend): %v", err)
+	prepended, err := c.Get("prepend")
+	checkErr(err, "third prepend(prepend): %v", err)
+	if string(prepended.Value) != "1"+string(prepend.Value) {
+		t.Fatalf("Prepend: want=1prepend, got=%s", string(prepended.Value))
 	}
 
 	// Replace

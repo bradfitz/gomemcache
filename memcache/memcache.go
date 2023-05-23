@@ -254,11 +254,6 @@ func (cte *ConnectTimeoutError) Error() string {
 }
 
 func (c *Client) dial(addr net.Addr) (net.Conn, error) {
-	type connError struct {
-		cn  net.Conn
-		err error
-	}
-
 	nc, err := net.DialTimeout(addr.Network(), addr.String(), c.netTimeout())
 	if err == nil {
 		return nc, nil
@@ -565,6 +560,26 @@ func (c *Client) replace(rw *bufio.ReadWriter, item *Item) error {
 	return c.populateOne(rw, "replace", item)
 }
 
+// Append appends the given item to the existing item, if a value already
+// exists for its key. ErrNotStored is returned if that condition is not met.
+func (c *Client) Append(item *Item) error {
+	return c.onItem(item, (*Client).append)
+}
+
+func (c *Client) append(rw *bufio.ReadWriter, item *Item) error {
+	return c.populateOne(rw, "append", item)
+}
+
+// Prepend prepends the given item to the existing item, if a value already
+// exists for its key. ErrNotStored is returned if that condition is not met.
+func (c *Client) Prepend(item *Item) error {
+	return c.onItem(item, (*Client).prepend)
+}
+
+func (c *Client) prepend(rw *bufio.ReadWriter, item *Item) error {
+	return c.populateOne(rw, "prepend", item)
+}
+
 // CompareAndSwap writes the given item that was previously returned
 // by Get, if the value was neither modified or evicted between the
 // Get and the CompareAndSwap calls. The item's Key should not change
@@ -714,6 +729,27 @@ func (c *Client) incrDecr(verb, key string, delta uint64) (uint64, error) {
 		return nil
 	})
 	return val, err
+}
+
+// Close closes any open connections.
+//
+// It returns the first error encountered closing connections, but always
+// closes all connections.
+//
+// After Close, the Client may still be used.
+func (c *Client) Close() error {
+	c.lk.Lock()
+	defer c.lk.Unlock()
+	var ret error
+	for _, conns := range c.freeconn {
+		for _, c := range conns {
+			if err := c.nc.Close(); err != nil && ret == nil {
+				ret = err
+			}
+		}
+	}
+	c.freeconn = nil
+	return ret
 }
 
 func (c *Client) WarmUpPool() int {
