@@ -19,6 +19,8 @@ package memcache
 
 import (
 	"bufio"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -31,9 +33,10 @@ import (
 )
 
 const testServer = "localhost:11211"
+const testServerTLS = "localhost:11212"
 
-func setup(t *testing.T) bool {
-	c, err := net.Dial("tcp", testServer)
+func setup(t *testing.T, server string) bool {
+	c, err := net.Dial("tcp", server)
 	if err != nil {
 		t.Skipf("skipping test; no server running at %s", testServer)
 	}
@@ -43,10 +46,48 @@ func setup(t *testing.T) bool {
 }
 
 func TestLocalhost(t *testing.T) {
-	if !setup(t) {
+	if !setup(t, testServer) {
 		return
 	}
-	testWithClient(t, New(testServer))
+	c, err := New(testServer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	testWithClient(t, c)
+}
+
+func TestLocalhostTLS(t *testing.T) {
+	if !setup(t, testServerTLS) {
+		return
+	}
+	c, err := New(testServerTLS)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	caCert, err := ioutil.ReadFile("ca.pem")
+	if err != nil {
+		t.Fatal(err)
+	}
+	caCertPool := x509.NewCertPool()
+	caCertPool.AppendCertsFromPEM(caCert)
+	tlsConfig := &tls.Config{
+		RootCAs:    caCertPool,
+		ServerName: "localhost",
+	}
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c.TlsConfig = tlsConfig
+	testWithClient(t, c)
+}
+
+func TestNewError(t *testing.T) {
+	if _, err := New("memcached.invalid:11211"); err == nil {
+		t.Errorf("expected invalid host to raise error, got none")
+	}
 }
 
 // Run the memcached binary as a child process and connect to its unix socket.
@@ -68,7 +109,11 @@ func TestUnixSocket(t *testing.T) {
 		time.Sleep(time.Duration(25*i) * time.Millisecond)
 	}
 
-	testWithClient(t, New(sock))
+	c, err := New(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	testWithClient(t, c)
 }
 
 func mustSetF(t *testing.T, c *Client) func(*Item) {
@@ -240,6 +285,34 @@ func testWithClient(t *testing.T, c *Client) {
 	// Test Ping
 	err = c.Ping()
 	checkErr(err, "error ping: %s", err)
+	// Stats
+	stats, err := c.Stats()
+	if n := len(stats); err != nil || n == 0 {
+		t.Errorf("Stats didn't get any statistics")
+	}
+
+	// StatsReset
+	err = c.StatsReset()
+	checkErr(err, "StatsReset: %v", err)
+	stats, err = c.Stats()
+	checkErr(err, "Stats: %v", err)
+	for _, s := range stats {
+		if want, got := "0", s.Stats["get_hits"]; want != got {
+			t.Errorf("StatsReset: expected stats to be reset, but get_hits is %s", got)
+		}
+	}
+
+	// StatsSettings
+	settings, err := c.StatsSettings()
+	checkErr(err, "StatsSettings: %v", err)
+	if len(settings) == 0 {
+		t.Errorf("StatsSettings: no settings were returned")
+	}
+	for _, s := range settings {
+		if want, got := "1024", s["maxconns"]; want != got {
+			t.Errorf("StatsSettings: want maxconns %q, got %q", want, got)
+		}
+	}
 }
 
 func testTouchWithClient(t *testing.T, c *Client) {

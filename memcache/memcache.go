@@ -20,6 +20,7 @@ package memcache
 import (
 	"bufio"
 	"bytes"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -69,9 +70,22 @@ const (
 	// DefaultMaxIdleConns is the default maximum number of idle connections
 	// kept for any single address.
 	DefaultMaxIdleConns = 2
+	buffered            = 8 // arbitrary buffered channel size, for readability
 )
 
-const buffered = 8 // arbitrary buffered channel size, for readability
+// Stats is a type for storing current statistics of a Memcached server
+type Stats struct {
+	// Stats are the top level key = value metrics from memcache
+	Stats map[string]string
+
+	// Slabs are indexed by slab ID.  Each has a k/v store of metrics for
+	// that slab.
+	Slabs map[int]map[string]string
+
+	// Items are indexed by slab ID.  Each ID has a k/v store of metrics for
+	// items in that slab.
+	Items map[int]map[string]string
+}
 
 // resumableError returns true if err is only a protocol-level cache error.
 // This is used to determine whether or not a server connection should
@@ -109,18 +123,22 @@ var (
 	resultEnd       = []byte("END\r\n")
 	resultOk        = []byte("OK\r\n")
 	resultTouched   = []byte("TOUCHED\r\n")
+	resultReset     = []byte("RESET\r\n")
 
 	resultClientErrorPrefix = []byte("CLIENT_ERROR ")
 	versionPrefix           = []byte("VERSION")
+	resultStatPrefix        = []byte("STAT")
 )
 
 // New returns a memcache client using the provided server(s)
 // with equal weight. If a server is listed multiple times,
 // it gets a proportional amount of weight.
-func New(server ...string) *Client {
+func New(server ...string) (*Client, error) {
 	ss := new(ServerList)
-	ss.SetServers(server...)
-	return NewFromSelector(ss)
+	if err := ss.SetServers(server...); err != nil {
+		return nil, err
+	}
+	return NewFromSelector(ss), nil
 }
 
 // NewFromSelector returns a new Client using the provided ServerSelector.
@@ -145,8 +163,9 @@ type Client struct {
 
 	selector ServerSelector
 
-	lk       sync.Mutex
-	freeconn map[string][]*conn
+	lk        sync.Mutex
+	freeconn  map[string][]*conn
+	TlsConfig *tls.Config
 }
 
 // Item is an item to be got or stored in a memcached server.
@@ -254,7 +273,21 @@ func (cte *ConnectTimeoutError) Error() string {
 }
 
 func (c *Client) dial(addr net.Addr) (net.Conn, error) {
-	nc, err := net.DialTimeout(addr.Network(), addr.String(), c.netTimeout())
+	type connError struct {
+		cn  net.Conn
+		err error
+	}
+
+	var (
+		nc  net.Conn
+		err error
+	)
+	nd := net.Dialer{Timeout: c.netTimeout()}
+	if c.TlsConfig != nil {
+		nc, err = tls.DialWithDialer(&nd, addr.Network(), addr.String(), c.TlsConfig)
+	} else {
+		nc, err = nd.Dial(addr.Network(), addr.String())
+	}
 	if err == nil {
 		return nc, nil
 	}
@@ -784,4 +817,179 @@ func (c *Client) WarmUpPool() int {
 	connAcquired.Wait()
 	wg.Done()
 	return connsCreated
+}
+
+// Stats returns the stats from all servers this client knows about.
+func (c *Client) Stats() (map[net.Addr]Stats, error) {
+	var mu sync.Mutex
+	stats := make(map[net.Addr]Stats)
+	ch := make(chan error, buffered)
+	sn := 0
+	c.selector.Each(func(addr net.Addr) error {
+		sn++
+		go func() {
+			ch <- c.statsFromAddr(addr, func(stat Stats) {
+				mu.Lock()
+				defer mu.Unlock()
+				stats[addr] = stat
+			})
+		}()
+		return nil
+	})
+
+	var err error
+	for i := 0; i < sn; i++ {
+		if ge := <-ch; ge != nil {
+			err = ge
+		}
+	}
+	return stats, err
+}
+
+// StatsReset resets all statistics.
+func (c *Client) StatsReset() error {
+	ch := make(chan error, buffered)
+	sn := 0
+	c.selector.Each(func(addr net.Addr) error {
+		sn++
+		go func() {
+			ch <- c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
+				return writeExpectf(rw, resultReset, "stats reset\r\n")
+			})
+		}()
+		return nil
+	})
+
+	var err error
+	for i := 0; i < sn; i++ {
+		if e := <-ch; e != nil {
+			err = e
+		}
+	}
+	return err
+}
+
+func (c *Client) statsFromAddr(addr net.Addr, cb func(Stats)) error {
+	return c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
+		cmds := []string{"stats\r\n", "stats slabs\r\n", "stats items\r\n"}
+		var stats Stats
+		stats.Stats = make(map[string]string)
+		stats.Slabs = make(map[int]map[string]string)
+		stats.Items = make(map[int]map[string]string)
+
+		for _, cmd := range cmds {
+			line, err := writeReadLine(rw, cmd)
+			if err != nil {
+				return err
+			}
+
+			if bytes.HasPrefix(line, resultClientErrorPrefix) {
+				errMsg := line[len(resultClientErrorPrefix) : len(line)-2]
+				return errors.New("memcache: client error: " + string(errMsg))
+			}
+
+			for err == nil && !bytes.Equal(line, resultEnd) {
+				s := bytes.Split(line, []byte(" "))
+				if len(s) == 3 && bytes.HasPrefix(s[0], resultStatPrefix) {
+					f := bytes.Split(s[1], []byte(":"))
+					switch len(f) {
+					case 1:
+						// Global stats
+						stats.Stats[string(s[1])] = string(bytes.TrimSpace(s[2]))
+					case 2:
+						// Slab stats
+						i, err := strconv.ParseInt(string(f[0]), 10, 64)
+						if err != nil {
+							return err
+						}
+						h, ok := stats.Slabs[int(i)]
+						if !ok {
+							h = make(map[string]string)
+							stats.Slabs[int(i)] = h
+						}
+						h[string(f[1])] = string(bytes.TrimSpace(s[2]))
+					case 3:
+						// Slab Item stats
+						i, err := strconv.ParseInt(string(f[1]), 10, 64)
+						if err != nil {
+							return err
+						}
+						h, ok := stats.Items[int(i)]
+						if !ok {
+							h = make(map[string]string)
+							stats.Items[int(i)] = h
+						}
+						h[string(f[2])] = string(bytes.TrimSpace(s[2]))
+					}
+				}
+				line, err = rw.ReadSlice('\n')
+				if err != nil {
+					return err
+				}
+			}
+		}
+		cb(stats)
+		return nil
+	})
+}
+
+// StatsSettings returns the stats about memcached settings from all servers.
+func (c *Client) StatsSettings() (map[net.Addr]map[string]string, error) {
+	type result struct {
+		addr  net.Addr
+		stats map[string]string
+		err   error
+	}
+
+	ch := make(chan result, buffered)
+	sn := 0
+	c.selector.Each(func(addr net.Addr) error {
+		sn++
+		go func() {
+			r := result{addr: addr}
+			r.err = c.statsSettingsFromAddr(addr, func(s map[string]string) { r.stats = s })
+			ch <- r
+		}()
+		return nil
+	})
+
+	var err error
+	stats := make(map[net.Addr]map[string]string)
+	for i := 0; i < sn; i++ {
+		if r := <-ch; r.err != nil {
+			err = r.err
+		} else {
+			stats[r.addr] = r.stats
+		}
+	}
+	return stats, err
+}
+
+func (c *Client) statsSettingsFromAddr(addr net.Addr, cb func(map[string]string)) error {
+	return c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
+		line, err := writeReadLine(rw, "stats settings\r\n")
+		if err != nil {
+			return err
+		}
+
+		if bytes.HasPrefix(line, resultClientErrorPrefix) {
+			errMsg := line[len(resultClientErrorPrefix) : len(line)-2]
+			return errors.New("memcache: client error: " + string(errMsg))
+		}
+
+		stats := map[string]string{}
+		for err == nil && !bytes.Equal(line, resultEnd) {
+			s := bytes.SplitN(line, []byte(" "), 3)
+			if len(s) != 3 || bytes.Compare(s[0], resultStatPrefix) != 0 {
+				return fmt.Errorf("memcache: unexpected stats line format %q", line)
+			}
+			stats[string(s[1])] = string(bytes.TrimSpace(s[2]))
+			line, err = rw.ReadSlice('\n')
+			if err != nil {
+				return err
+			}
+		}
+		cb(stats)
+		return nil
+	})
 }
