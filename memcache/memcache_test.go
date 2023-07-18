@@ -19,6 +19,7 @@ package memcache
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -119,6 +120,16 @@ func testWithClient(t *testing.T, c *Client) {
 	}
 	if string(it.Value) != "hello world" {
 		t.Errorf("get(Hello_世界) Value = %q, want hello world", string(it.Value))
+	}
+
+	// Get with expired context
+	key := "foo"
+	ctx, cancel := context.WithTimeout(context.TODO(), time.Second)
+	defer cancel()
+	time.Sleep(1010 * time.Millisecond)
+	it, err = c.GetWithContext(ctx, key)
+	if err != context.DeadlineExceeded {
+		t.Errorf("getWithContext(foo) should return context.DeadlineExceeded instead of %v", err)
 	}
 
 	// Set malformed keys
@@ -307,7 +318,7 @@ func BenchmarkOnItem(b *testing.B) {
 
 	addr := fakeServer.Addr()
 	c := New(addr.String())
-	if _, err := c.getConn(addr); err != nil {
+	if _, err := c.getConn(context.TODO(), addr); err != nil {
 		b.Fatal("failed to initialize connection to fake server")
 	}
 
@@ -315,6 +326,6 @@ func BenchmarkOnItem(b *testing.B) {
 	dummyFn := func(_ *Client, _ *bufio.ReadWriter, _ *Item) error { return nil }
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		c.onItem(&item, dummyFn)
+		c.onItem(context.TODO(), &item, dummyFn)
 	}
 }
