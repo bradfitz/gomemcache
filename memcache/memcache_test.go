@@ -30,7 +30,7 @@ import (
 	"time"
 )
 
-const testServer = "localhost:11211"
+const testServer = "127.0.0.1:11211"
 
 func setup(t *testing.T) bool {
 	c, err := net.Dial("tcp", testServer)
@@ -240,6 +240,15 @@ func testWithClient(t *testing.T, c *Client) {
 	// Test Ping
 	err = c.Ping()
 	checkErr(err, "error ping: %s", err)
+
+	// Stats
+	statz := c.Stats()
+	if statz.ActiveConns > 0 {
+		t.Errorf("expected 0 active conns, got %d", statz.ActiveConns)
+	}
+	if statz.IdleConns < 1 {
+		t.Errorf("expected at least 1 idle conns, got %d", statz.IdleConns)
+	}
 }
 
 func testTouchWithClient(t *testing.T, c *Client) {
