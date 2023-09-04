@@ -3,21 +3,15 @@
 This is a memcache client library for the Go programming language
 (http://golang.org/).
 
-## Installing
+## Example
 
-### Using *go get*
+Install with:
 
 ```shell
 $ go get github.com/bradfitz/gomemcache/memcache
 ```
 
-After this command *gomemcache* is ready to use. Its source will be in:
-
-```
-$GOPATH/src/github.com/bradfitz/gomemcache/memcache
-```
-
-## Example
+Then use it like:
 
 ```go
 import (
