@@ -30,23 +30,17 @@ import (
 	"time"
 )
 
-const testServer = "localhost:11211"
-
-func setup(t *testing.T) bool {
-	c, err := net.Dial("tcp", testServer)
-	if err != nil {
-		t.Skipf("skipping test; no server running at %s", testServer)
-	}
-	c.Write([]byte("flush_all\r\n"))
-	c.Close()
-	return true
-}
+const localhostTCPAddr = "localhost:11211"
 
 func TestLocalhost(t *testing.T) {
-	if !setup(t) {
-		return
+	c, err := net.Dial("tcp", localhostTCPAddr)
+	if err != nil {
+		t.Skipf("skipping test; no server running at %s", localhostTCPAddr)
 	}
-	testWithClient(t, New(testServer))
+	io.WriteString(c, "flush_all\r\n")
+	c.Close()
+
+	testWithClient(t, New(localhostTCPAddr))
 }
 
 // Run the memcached binary as a child process and connect to its unix socket.
@@ -71,6 +65,19 @@ func TestUnixSocket(t *testing.T) {
 	testWithClient(t, New(sock))
 }
 
+func TestFakeServer(t *testing.T) {
+	ln, err := net.Listen("tcp", "localhost:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	t.Logf("running test server on %s", ln.Addr())
+	defer ln.Close()
+	srv := &testServer{}
+	go srv.Serve(ln)
+
+	testWithClient(t, New(ln.Addr().String()))
+}
+
 func mustSetF(t *testing.T, c *Client) func(*Item) {
 	return func(it *Item) {
 		if err := c.Set(it); err != nil {
@@ -81,6 +88,7 @@ func mustSetF(t *testing.T, c *Client) func(*Item) {
 
 func testWithClient(t *testing.T, c *Client) {
 	checkErr := func(err error, format string, args ...interface{}) {
+		t.Helper()
 		if err != nil {
 			t.Fatalf(format, args...)
 		}
@@ -280,7 +288,7 @@ func testTouchWithClient(t *testing.T, c *Client) {
 	}
 
 	_, err = c.Get("bar")
-	if nil == err {
+	if err == nil {
 		t.Fatalf("item bar did not expire within %v seconds", time.Now().Sub(setTime).Seconds())
 	} else {
 		if err != ErrCacheMiss {
