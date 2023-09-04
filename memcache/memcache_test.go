@@ -99,20 +99,36 @@ func testWithClient(t *testing.T, c *Client) {
 	mustSet := mustSetF(t, c)
 
 	// Set
-	foo := &Item{Key: "foo", Value: []byte("fooval"), Flags: 123}
+	foo := &Item{Key: "foo", Value: []byte("fooval-fromset"), Flags: 123}
 	err := c.Set(foo)
 	checkErr(err, "first set(foo): %v", err)
 	err = c.Set(foo)
 	checkErr(err, "second set(foo): %v", err)
 
-	// Get
+	// CompareAndSwap
 	it, err := c.Get("foo")
+	checkErr(err, "get(foo): %v", err)
+	if string(it.Value) != "fooval-fromset" {
+		t.Errorf("get(foo) Value = %q, want fooval-romset", it.Value)
+	}
+	it0, err := c.Get("foo") // another get, to fail our CAS later
+	checkErr(err, "get(foo): %v", err)
+	it.Value = []byte("fooval")
+	err = c.CompareAndSwap(it)
+	checkErr(err, "cas(foo): %v", err)
+	it0.Value = []byte("should-fail")
+	if err := c.CompareAndSwap(it0); err != ErrCASConflict {
+		t.Fatalf("cas(foo) error = %v; want ErrCASConflict", err)
+	}
+
+	// Get
+	it, err = c.Get("foo")
 	checkErr(err, "get(foo): %v", err)
 	if it.Key != "foo" {
 		t.Errorf("get(foo) Key = %q, want foo", it.Key)
 	}
 	if string(it.Value) != "fooval" {
-		t.Errorf("get(foo) Value = %q, want fooval", string(it.Value))
+		t.Errorf("get(foo) Value = %q, want fooval", it.Value)
 	}
 	if it.Flags != 123 {
 		t.Errorf("get(foo) Flags = %v, want 123", it.Flags)
