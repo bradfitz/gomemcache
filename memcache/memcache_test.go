@@ -33,6 +33,7 @@ import (
 const localhostTCPAddr = "localhost:11211"
 
 func TestLocalhost(t *testing.T) {
+	t.Parallel()
 	c, err := net.Dial("tcp", localhostTCPAddr)
 	if err != nil {
 		t.Skipf("skipping test; no server running at %s", localhostTCPAddr)
@@ -45,6 +46,7 @@ func TestLocalhost(t *testing.T) {
 
 // Run the memcached binary as a child process and connect to its unix socket.
 func TestUnixSocket(t *testing.T) {
+	t.Parallel()
 	sock := fmt.Sprintf("/tmp/test-gomemcache-%d.sock", os.Getpid())
 	cmd := exec.Command("memcached", "-s", sock)
 	if err := cmd.Start(); err != nil {
@@ -66,6 +68,7 @@ func TestUnixSocket(t *testing.T) {
 }
 
 func TestFakeServer(t *testing.T) {
+	t.Parallel()
 	ln, err := net.Listen("tcp", "localhost:0")
 	if err != nil {
 		t.Fatalf("failed to listen: %v", err)
