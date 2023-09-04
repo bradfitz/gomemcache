@@ -71,7 +71,7 @@ func (c *testConn) reply(msg string) bool {
 }
 
 var (
-	writeRx    = regexp.MustCompile(`^(set|add|replace|append|prepend|cas) (\S+) (\d+) (\d+) (\d+)( \S+)?( noreply)?\r\n`)
+	writeRx    = regexp.MustCompile(`^(set|add|replace|append|prepend|cas) (\S+) (\d+) (\d+) (\d+)(?: (\S+))?( noreply)?\r\n`)
 	deleteRx   = regexp.MustCompile(`^delete (\S+)( noreply)?\r\n`)
 	incrDecrRx = regexp.MustCompile(`^(incr|decr) (\S+) (\d+)( noreply)?\r\n`)
 	touchRx    = regexp.MustCompile(`^touch (\S+) (\d+)( noreply)?\r\n`)
@@ -148,7 +148,6 @@ func (c *testConn) handleRequestLine(line string) bool {
 		exptimeVal, _ := strconv.ParseInt(exptimeStr, 10, 64)
 		itemLen, _ := strconv.ParseInt(lenStr, 10, 32)
 		//log.Printf("got %q flags=%q exp=%d %d len=%d cas=%q noreply=%q", verb, key, flags, exptimeVal, itemLen, casUniq, noReply)
-		_ = casUniq // TODO
 		if c.s.m == nil {
 			c.s.m = make(map[string]serverItem)
 		}
@@ -200,7 +199,11 @@ func (c *testConn) handleRequestLine(line string) bool {
 			if !ok {
 				reply("NOT_FOUND")
 			}
-			return false
+			if casUniq != fmt.Sprint(was.casUniq) {
+				return reply("EXISTS")
+			}
+			c.s.m[key] = newItem
+			return reply("STORED")
 		case "append":
 			if !ok {
 				return reply("NOT_STORED")
