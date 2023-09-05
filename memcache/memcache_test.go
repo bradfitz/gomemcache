@@ -19,16 +19,24 @@ package memcache
 
 import (
 	"bufio"
+	"bytes"
+	"context"
+	"crypto/tls"
+	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 )
+
+var debug = flag.Bool("debug", false, "be more verbose")
 
 const localhostTCPAddr = "localhost:11211"
 
@@ -79,6 +87,77 @@ func TestFakeServer(t *testing.T) {
 	go srv.Serve(ln)
 
 	testWithClient(t, New(ln.Addr().String()))
+}
+
+func TestTLS(t *testing.T) {
+	t.Parallel()
+	td := t.TempDir()
+
+	// Test whether our memcached binary has TLS support. We --enable-ssl first,
+	// before --version, as memcached evaluates the flags in the order provided
+	// and we want it to fail if it's built without TLS support (as it is in
+	// Debian, but not Ubuntu or Homebrew).
+	out, err := exec.Command("memcached", "--enable-ssl", "--version").CombinedOutput()
+	if err != nil {
+		t.Skipf("skipping test; couldn't find memcached or no TLS support in binary: %v, %s", err, out)
+	}
+	t.Logf("version: %s", bytes.TrimSpace(out))
+
+	if err := os.WriteFile(filepath.Join(td, "/cert.pem"), LocalhostCert, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(td, "/key.pem"), LocalhostKey, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Find some unused port. This is racy but we hope for the best and hope the kernel
+	// doesn't reassign our ephemeral port to somebody in the tiny race window.
+	ln, err := net.Listen("tcp", "localhost:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	ln.Close()
+
+	cmd := exec.Command("memcached",
+		"--port="+strconv.Itoa(port),
+		"--listen=127.0.0.1",
+		"--enable-ssl",
+		"-o", "ssl_chain_cert=cert.pem",
+		"-o", "ssl_key=key.pem")
+	cmd.Dir = td
+	if *debug {
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("failed to start memcached: %v", err)
+	}
+	defer cmd.Wait()
+	defer cmd.Process.Kill()
+
+	// Wait a bit for the server to be running.
+	for i := 0; i < 10; i++ {
+		nc, err := net.Dial("tcp", "localhost:"+strconv.Itoa(port))
+		if err == nil {
+			t.Logf("localhost:%d is up.", port)
+			nc.Close()
+			break
+		}
+		t.Logf("waiting for localhost:%d to be up...", port)
+		time.Sleep(time.Duration(25*i) * time.Millisecond)
+	}
+
+	c := New(net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	c.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		var td tls.Dialer
+		td.Config = &tls.Config{
+			InsecureSkipVerify: true,
+		}
+		return td.DialContext(ctx, network, addr)
+
+	}
+	testWithClient(t, c)
 }
 
 func mustSetF(t *testing.T, c *Client) func(*Item) {
