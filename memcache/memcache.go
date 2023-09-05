@@ -235,7 +235,8 @@ func (c *Client) getFreeConn(addr net.Addr) (cn *conn, ok bool) {
 	if !ok || len(freelist) == 0 {
 		return nil, false
 	}
-	cn = freelist[len(freelist)-1]
+	cn = freelist[0]
+	copy(c.freeconn[addr.String()], freelist[1:])
 	c.freeconn[addr.String()] = freelist[:len(freelist)-1]
 	return cn, true
 }
