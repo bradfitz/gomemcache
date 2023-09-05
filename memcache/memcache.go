@@ -132,8 +132,12 @@ func NewFromSelector(ss ServerSelector) *Client {
 // Client is a memcache client.
 // It is safe for unlocked use by multiple concurrent goroutines.
 type Client struct {
-	// DialContext connects to the address on the named network
-	// using the provided context
+	// DialContext connects to the address on the named network using the
+	// provided context.
+	//
+	// To connect to servers using TLS (memcached running with "--enable-ssl"),
+	// use a DialContext func that uses tls.Dialer.DialContext. See this
+	// package's tests as an example.
 	DialContext func(ctx context.Context, network, address string) (net.Conn, error)
 
 	// Timeout specifies the socket read/write timeout.
