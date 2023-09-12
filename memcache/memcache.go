@@ -363,13 +363,16 @@ func (c *Client) withKeyAddr(key string, fn func(net.Addr) error) (err error) {
 	return fn(addr)
 }
 
-func (c *Client) withAddrRw(addr net.Addr, fn func(*bufio.ReadWriter) error) (err error) {
+func (c *Client) withAddrRw(addr net.Addr, fn func(*bufio.ReadWriter) error) error {
 	cn, err := c.getConn(addr)
 	if err != nil {
 		return err
 	}
 	defer cn.condRelease(&err)
-	return fn(cn.rw)
+	if err = fn(cn.rw); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (c *Client) withKeyRw(key string, fn func(*bufio.ReadWriter) error) error {
