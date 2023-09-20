@@ -421,7 +421,7 @@ func (c *Client) getConn(addr net.Addr) (*conn, error) {
 	return cn, nil
 }
 
-func (c *Client) onItem(item *Item, operation string, fn func(*Client, *bufio.ReadWriter, *Item) error) error {
+func (c *Client) onItem(item *Item, fn func(*Client, *bufio.ReadWriter, *Item) error) error {
 	addr, err := c.selector.PickServer(item.Key)
 	if err != nil {
 		return err
@@ -706,7 +706,7 @@ func cut(s string, sep byte) (before, after string, found bool) {
 
 // Set writes the given item, unconditionally.
 func (c *Client) Set(item *Item) error {
-	return c.onItem(item, "set", (*Client).set)
+	return c.onItem(item, (*Client).set)
 }
 
 func (c *Client) set(rw *bufio.ReadWriter, item *Item) error {
@@ -716,7 +716,7 @@ func (c *Client) set(rw *bufio.ReadWriter, item *Item) error {
 // Add writes the given item, if no value already exists for its
 // key. ErrNotStored is returned if that condition is not met.
 func (c *Client) Add(item *Item) error {
-	return c.onItem(item, "add", (*Client).add)
+	return c.onItem(item, (*Client).add)
 }
 
 func (c *Client) add(rw *bufio.ReadWriter, item *Item) error {
@@ -726,7 +726,7 @@ func (c *Client) add(rw *bufio.ReadWriter, item *Item) error {
 // Replace writes the given item, but only if the server *does*
 // already hold data for this key
 func (c *Client) Replace(item *Item) error {
-	return c.onItem(item, "replace", (*Client).replace)
+	return c.onItem(item, (*Client).replace)
 }
 
 func (c *Client) replace(rw *bufio.ReadWriter, item *Item) error {
@@ -741,7 +741,7 @@ func (c *Client) replace(rw *bufio.ReadWriter, item *Item) error {
 // calls. ErrNotStored is returned if the value was evicted in between
 // the calls.
 func (c *Client) CompareAndSwap(item *Item) error {
-	return c.onItem(item, "cas", (*Client).cas)
+	return c.onItem(item, (*Client).cas)
 }
 
 func (c *Client) cas(rw *bufio.ReadWriter, item *Item) error {

@@ -567,7 +567,7 @@ func BenchmarkOnItem(b *testing.B) {
 	dummyFn := func(_ *Client, _ *bufio.ReadWriter, _ *Item) error { return nil }
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = c.onItem(&item, "dummy", dummyFn)
+		_ = c.onItem(&item, dummyFn)
 	}
 }
 
