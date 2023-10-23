@@ -48,7 +48,7 @@ var (
 	// CompareAndSwap) failed because the condition was not satisfied.
 	ErrNotStored = errors.New("memcache: item not stored")
 
-	// ErrServer means that a server error occurred.
+	// ErrServerError means that a server error occurred.
 	ErrServerError = errors.New("memcache: server error")
 
 	// ErrNoStats means that no statistics were available.
@@ -174,6 +174,14 @@ type Client struct {
 	// Consider your expected traffic rates and latency carefully. This should
 	// be set to a number higher than your peak parallel requests.
 	MaxIdleConns int
+
+	// WriteBufferSizeBytes specifies the size of the write buffer (in bytes). The buffer
+	// is allocated for each connection. If <= 0, the default value of 4KB will be used.
+	WriteBufferSizeBytes int
+
+	// ReadBufferSizeBytes specifies the size of the read buffer (in bytes). The buffer
+	// is allocated for each connection. If <= 0, the default value of 4KB will be used.
+	ReadBufferSizeBytes int
 
 	// recentlyUsedConnsThreshold is the default grace period given to an
 	// idle connection to consider it "recently used". Recently used connections
@@ -402,6 +410,11 @@ func (c *Client) dial(addr net.Addr) (net.Conn, error) {
 }
 
 func (c *Client) getConn(addr net.Addr) (*conn, error) {
+	var (
+		writer *bufio.Writer
+		reader *bufio.Reader
+	)
+
 	cn, ok := c.getFreeConn(addr)
 	if ok {
 		cn.extendDeadline()
@@ -411,10 +424,25 @@ func (c *Client) getConn(addr net.Addr) (*conn, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// Init buffered writer.
+	if c.WriteBufferSizeBytes > 0 {
+		writer = bufio.NewWriterSize(nc, c.WriteBufferSizeBytes)
+	} else {
+		writer = bufio.NewWriter(nc)
+	}
+
+	// Init buffered reader.
+	if c.ReadBufferSizeBytes > 0 {
+		reader = bufio.NewReaderSize(nc, c.ReadBufferSizeBytes)
+	} else {
+		reader = bufio.NewReader(nc)
+	}
+
 	cn = &conn{
 		nc:   nc,
 		addr: addr,
-		rw:   bufio.NewReadWriter(bufio.NewReader(nc), bufio.NewWriter(nc)),
+		rw:   bufio.NewReadWriter(reader, writer),
 		c:    c,
 	}
 	cn.extendDeadline()
