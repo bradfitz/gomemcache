@@ -493,8 +493,8 @@ func TestScanGetResponseLine(t *testing.T) {
 			if got.Flags != tt.wantFlags {
 				t.Errorf("flags = %v, want %v", got.Flags, tt.wantFlags)
 			}
-			if got.casid != tt.wantCasid {
-				t.Errorf("flags = %v, want %v", got.casid, tt.wantCasid)
+			if got.CasID != tt.wantCasid {
+				t.Errorf("flags = %v, want %v", got.CasID, tt.wantCasid)
 			}
 			if gotSize != tt.wantSize {
 				t.Errorf("size = %v, want %v", gotSize, tt.wantSize)
