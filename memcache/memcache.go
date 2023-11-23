@@ -1,5 +1,5 @@
 /*
-Copyright 2011 Google Inc.
+Copyright 2011 The gomemcache AUTHORS
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -20,12 +20,12 @@ package memcache
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"math"
 	"net"
-
 	"strconv"
 	"strings"
 	"sync"
@@ -66,7 +66,7 @@ var (
 
 const (
 	// DefaultTimeout is the default socket read/write timeout.
-	DefaultTimeout = 100 * time.Millisecond
+	DefaultTimeout = 500 * time.Millisecond
 
 	// DefaultMaxIdleConns is the default maximum number of idle connections
 	// kept for any single address.
@@ -133,6 +133,14 @@ func NewFromSelector(ss ServerSelector) *Client {
 // Client is a memcache client.
 // It is safe for unlocked use by multiple concurrent goroutines.
 type Client struct {
+	// DialContext connects to the address on the named network using the
+	// provided context.
+	//
+	// To connect to servers using TLS (memcached running with "--enable-ssl"),
+	// use a DialContext func that uses tls.Dialer.DialContext. See this
+	// package's tests as an example.
+	DialContext func(ctx context.Context, network, address string) (net.Conn, error)
+
 	// Timeout specifies the socket read/write timeout.
 	// If zero, DefaultTimeout is used.
 	Timeout time.Duration
@@ -168,8 +176,11 @@ type Item struct {
 	// Zero means the Item has no expiration time.
 	Expiration int32
 
-	// Compare and swap ID.
-	casid uint64
+	// CasID is the compare and swap ID.
+	//
+	// It's populated by get requests and then the same value is
+	// required for a CompareAndSwap request to succeed.
+	CasID uint64
 }
 
 // conn is a connection to a server.
@@ -256,7 +267,18 @@ func (cte *ConnectTimeoutError) Error() string {
 }
 
 func (c *Client) dial(addr net.Addr) (net.Conn, error) {
-	nc, err := net.DialTimeout(addr.Network(), addr.String(), c.netTimeout())
+	ctx, cancel := context.WithTimeout(context.Background(), c.netTimeout())
+	defer cancel()
+
+	dialerContext := c.DialContext
+	if dialerContext == nil {
+		dialer := net.Dialer{
+			Timeout: c.netTimeout(),
+		}
+		dialerContext = dialer.DialContext
+	}
+
+	nc, err := dialerContext(ctx, addr.Network(), addr.String())
 	if err == nil {
 		return nc, nil
 	}
@@ -553,7 +575,7 @@ func scanGetResponseLine(line []byte, it *Item) (size int, err error) {
 	if !found { // final CAS ID is optional.
 		return int(size64), nil
 	}
-	it.casid, err = strconv.ParseUint(rest, 10, 64)
+	it.CasID, err = strconv.ParseUint(rest, 10, 64)
 	if err != nil {
 		return errf(line)
 	}
@@ -597,6 +619,26 @@ func (c *Client) replace(rw *bufio.ReadWriter, item *Item) error {
 	return c.populateOne(rw, "replace", item)
 }
 
+// Append appends the given item to the existing item, if a value already
+// exists for its key. ErrNotStored is returned if that condition is not met.
+func (c *Client) Append(item *Item) error {
+	return c.onItem(item, (*Client).append)
+}
+
+func (c *Client) append(rw *bufio.ReadWriter, item *Item) error {
+	return c.populateOne(rw, "append", item)
+}
+
+// Prepend prepends the given item to the existing item, if a value already
+// exists for its key. ErrNotStored is returned if that condition is not met.
+func (c *Client) Prepend(item *Item) error {
+	return c.onItem(item, (*Client).prepend)
+}
+
+func (c *Client) prepend(rw *bufio.ReadWriter, item *Item) error {
+	return c.populateOne(rw, "prepend", item)
+}
+
 // CompareAndSwap writes the given item that was previously returned
 // by Get, if the value was neither modified or evicted between the
 // Get and the CompareAndSwap calls. The item's Key should not change
@@ -619,7 +661,7 @@ func (c *Client) populateOne(rw *bufio.ReadWriter, verb string, item *Item) erro
 	var err error
 	if verb == "cas" {
 		_, err = fmt.Fprintf(rw, "%s %s %d %d %d %d\r\n",
-			verb, item.Key, item.Flags, item.Expiration, len(item.Value), item.casid)
+			verb, item.Key, item.Flags, item.Expiration, len(item.Value), item.CasID)
 	} else {
 		_, err = fmt.Fprintf(rw, "%s %s %d %d %d\r\n",
 			verb, item.Key, item.Flags, item.Expiration, len(item.Value))
@@ -746,4 +788,25 @@ func (c *Client) incrDecr(verb, key string, delta uint64) (uint64, error) {
 		return nil
 	})
 	return val, err
+}
+
+// Close closes any open connections.
+//
+// It returns the first error encountered closing connections, but always
+// closes all connections.
+//
+// After Close, the Client may still be used.
+func (c *Client) Close() error {
+	c.lk.Lock()
+	defer c.lk.Unlock()
+	var ret error
+	for _, conns := range c.freeconn {
+		for _, c := range conns {
+			if err := c.nc.Close(); err != nil && ret == nil {
+				ret = err
+			}
+		}
+	}
+	c.freeconn = nil
+	return ret
 }
