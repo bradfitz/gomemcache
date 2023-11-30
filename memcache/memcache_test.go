@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"math/rand"
 	"net"
 	"os"
 	"os/exec"
@@ -80,6 +81,80 @@ func TestUnixSocket(t *testing.T) {
 	t.Cleanup(c.Close)
 
 	testWithClient(t, c)
+}
+
+func TestDeadlines(t *testing.T) {
+	if !setup(t) {
+		return
+	}
+
+	delay := 20 * time.Millisecond
+	items := 4
+
+	// this will be an insufficient timeout, because we need to read 4 items back from the network
+	// with an artificial delay (mimicking network congestion) when reading from the conn buffered reader
+	timeout := time.Duration(items) * delay
+
+	c := newSlowClient(New(testServer), timeout, delay)
+	t.Cleanup(c.Close)
+
+	checkErr := func(err error, format string, args ...interface{}) {
+		if err != nil {
+			t.Fatalf(format, args...)
+		}
+	}
+	mustSet := mustSetF(t, c.Client)
+
+	buf := make([]byte, 1<<20)
+	_, err := rand.Read(buf)
+	if err != nil {
+		fmt.Println("Error generating random data:", err)
+		return
+	}
+
+	keys := []string{}
+
+	for i := 0; i < items; i++ {
+		key := fmt.Sprintf("foo%d", i)
+		mustSet(&Item{Key: key, Value: buf})
+		keys = append(keys, key)
+	}
+
+	_, err = c.GetMulti(keys)
+	checkErr(err, "oops: %s", err)
+}
+
+type slowClient struct {
+	*Client
+
+	readTimeout time.Duration
+}
+
+type slowReadWriter struct {
+	*bufio.ReadWriter
+
+	delay time.Duration
+}
+
+func (s *slowReadWriter) ReadSlice(delim byte) (line []byte, err error) {
+	time.Sleep(s.delay)
+	return s.ReadWriter.ReadSlice(delim)
+}
+
+func newSlowClient(inner *Client, readTimeout time.Duration, delay time.Duration) *slowClient {
+	inner.Timeout = readTimeout
+	inner.readWriterFactory = func(nc net.Conn) ReadWriter {
+		return &slowReadWriter{
+			ReadWriter: bufio.NewReadWriter(bufio.NewReader(nc), bufio.NewWriter(nc)),
+
+			delay: delay,
+		}
+	}
+
+	return &slowClient{
+		Client:      inner,
+		readTimeout: readTimeout,
+	}
 }
 
 func mustSetF(t *testing.T, c *Client) func(*Item) {
@@ -564,7 +639,7 @@ func BenchmarkOnItem(b *testing.B) {
 	}
 
 	item := Item{Key: "foo"}
-	dummyFn := func(_ *Client, _ *bufio.ReadWriter, _ *Item) error { return nil }
+	dummyFn := func(_ *Client, _ ReadWriter, _ *Item) error { return nil }
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = c.onItem(&item, "dummy", dummyFn)
