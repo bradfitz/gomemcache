@@ -528,30 +528,31 @@ func (c *Client) withKeyAddr(key, operation string, fn func(net.Addr) error) (er
 	return fn(addr)
 }
 
-func (c *Client) withAddrRw(addr net.Addr, fn func(ReadWriter) error) (err error) {
+func (c *Client) withAddrRw(addr net.Addr, fn func(*conn) error) (err error) {
 	cn, err := c.getConn(addr)
 	if err != nil {
 		return err
 	}
 	defer cn.condRelease(&err)
-	return fn(cn.rw)
+	return fn(cn)
 }
 
-func (c *Client) withKeyRw(key, operation string, fn func(ReadWriter) error) error {
+func (c *Client) withKeyRw(key, operation string, fn func(*conn) error) error {
 	return c.withKeyAddr(key, operation, func(addr net.Addr) error {
 		return c.withAddrRw(addr, fn)
 	})
 }
 
 func (c *Client) getFromAddr(addr net.Addr, keys []string, opts *Options, cb func(*Item)) error {
-	return c.withAddrRw(addr, func(rw ReadWriter) error {
+	return c.withAddrRw(addr, func(conn *conn) error {
+		rw := conn.rw
 		if _, err := fmt.Fprintf(rw, "gets %s\r\n", strings.Join(keys, " ")); err != nil {
 			return err
 		}
 		if err := rw.Flush(); err != nil {
 			return err
 		}
-		if err := c.parseGetResponse(rw, opts, cb); err != nil {
+		if err := c.parseGetResponse(rw, conn, opts, cb); err != nil {
 			return err
 		}
 		return nil
@@ -560,7 +561,8 @@ func (c *Client) getFromAddr(addr net.Addr, keys []string, opts *Options, cb fun
 
 // flushAllFromAddr send the flush_all command to the given addr
 func (c *Client) flushAllFromAddr(addr net.Addr) error {
-	return c.withAddrRw(addr, func(rw ReadWriter) error {
+	return c.withAddrRw(addr, func(conn *conn) error {
+		rw := conn.rw
 		if _, err := fmt.Fprintf(rw, "flush_all\r\n"); err != nil {
 			return err
 		}
@@ -583,7 +585,8 @@ func (c *Client) flushAllFromAddr(addr net.Addr) error {
 
 // ping sends the version command to the given addr
 func (c *Client) ping(addr net.Addr) error {
-	return c.withAddrRw(addr, func(rw ReadWriter) error {
+	return c.withAddrRw(addr, func(conn *conn) error {
+		rw := conn.rw
 		if _, err := fmt.Fprintf(rw, "version\r\n"); err != nil {
 			return err
 		}
@@ -606,7 +609,8 @@ func (c *Client) ping(addr net.Addr) error {
 }
 
 func (c *Client) touchFromAddr(addr net.Addr, keys []string, expiration int32) error {
-	return c.withAddrRw(addr, func(rw ReadWriter) error {
+	return c.withAddrRw(addr, func(conn *conn) error {
+		rw := conn.rw
 		for _, key := range keys {
 			if _, err := fmt.Fprintf(rw, "touch %s %d\r\n", key, expiration); err != nil {
 				return err
@@ -687,9 +691,11 @@ func (c *Client) GetMulti(keys []string, opts ...Option) (map[string]*Item, erro
 
 // parseGetResponse reads a GET response from r and calls cb for each
 // read and allocated Item
-func (c *Client) parseGetResponse(r Reader, opts *Options, cb func(*Item)) error {
+func (c *Client) parseGetResponse(r Reader, conn *conn, opts *Options, cb func(*Item)) error {
 	for {
 		line, err := r.ReadSlice('\n')
+		conn.extendDeadline()
+
 		if err != nil {
 			return err
 		}
@@ -886,14 +892,16 @@ func writeExpectf(rw ReadWriter, expect []byte, format string, args ...interface
 // Delete deletes the item with the provided key. The error ErrCacheMiss is
 // returned if the item didn't already exist in the cache.
 func (c *Client) Delete(key string) error {
-	return c.withKeyRw(key, "delete", func(rw ReadWriter) error {
+	return c.withKeyRw(key, "delete", func(conn *conn) error {
+		rw := conn.rw
 		return writeExpectf(rw, resultDeleted, "delete %s\r\n", key)
 	})
 }
 
 // DeleteAll deletes all items in the cache.
 func (c *Client) DeleteAll() error {
-	return c.withKeyRw("", "flush_all", func(rw ReadWriter) error {
+	return c.withKeyRw("", "flush_all", func(conn *conn) error {
+		rw := conn.rw
 		return writeExpectf(rw, resultDeleted, "flush_all\r\n")
 	})
 }
@@ -925,7 +933,8 @@ func (c *Client) Decrement(key string, delta uint64) (newValue uint64, err error
 
 func (c *Client) incrDecr(verb, key string, delta uint64) (uint64, error) {
 	var val uint64
-	err := c.withKeyRw(key, verb, func(rw ReadWriter) error {
+	err := c.withKeyRw(key, verb, func(conn *conn) error {
+		rw := conn.rw
 		line, err := writeReadLine(rw, "%s %s %d\r\n", verb, key, delta)
 		if err != nil {
 			return err

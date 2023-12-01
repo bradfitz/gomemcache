@@ -19,10 +19,10 @@ package memcache
 
 import (
 	"bufio"
+	"crypto/rand"
 	"fmt"
 	"io"
 	"io/ioutil"
-	"math/rand"
 	"net"
 	"os"
 	"os/exec"
@@ -83,7 +83,7 @@ func TestUnixSocket(t *testing.T) {
 	testWithClient(t, c)
 }
 
-func TestDeadlines(t *testing.T) {
+func TestGetMultiDeadlineExtension(t *testing.T) {
 	if !setup(t) {
 		return
 	}
@@ -108,7 +108,7 @@ func TestDeadlines(t *testing.T) {
 	buf := make([]byte, 1<<20)
 	_, err := rand.Read(buf)
 	if err != nil {
-		fmt.Println("Error generating random data:", err)
+		checkErr(err, "failed to generate random data: %s", err)
 		return
 	}
 
@@ -121,7 +121,12 @@ func TestDeadlines(t *testing.T) {
 	}
 
 	_, err = c.GetMulti(keys)
-	checkErr(err, "oops: %s", err)
+
+	if os.IsTimeout(err) {
+		t.Fatalf("deadline exceeded: %s", err)
+	}
+
+	checkErr(err, "unexpected error occurred: %s", err)
 }
 
 type slowClient struct {
@@ -665,8 +670,18 @@ func BenchmarkParseGetResponse(b *testing.B) {
 	c := &Client{}
 	reader := bufio.NewReader(response)
 
+	addr, err := net.ResolveTCPAddr("tcp", testServer)
+	if err != nil {
+		b.Fatalf("failed to resolve address %q: %q", testServer, err)
+	}
+
+	cn, err := c.getConn(addr)
+	if err != nil {
+		b.Fatalf("failed to get connection: %q", err)
+	}
+
 	for i := 0; i < b.N; i++ {
-		err := c.parseGetResponse(reader, opts, func(it *Item) {
+		err := c.parseGetResponse(reader, cn, opts, func(it *Item) {
 			opts.Alloc.Put(&it.Value)
 		})
 		if err != nil {
