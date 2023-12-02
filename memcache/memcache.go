@@ -693,8 +693,9 @@ func (c *Client) GetMulti(keys []string, opts ...Option) (map[string]*Item, erro
 // read and allocated Item
 func (c *Client) parseGetResponse(r Reader, conn *conn, opts *Options, cb func(*Item)) error {
 	for {
-		line, err := r.ReadSlice('\n')
+		// extend deadline before each additional call, otherwise all cumulative calls use the same overall deadline
 		conn.extendDeadline()
+		line, err := r.ReadSlice('\n')
 
 		if err != nil {
 			return err
