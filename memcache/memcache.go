@@ -196,8 +196,6 @@ type Client struct {
 	freeconn map[string][]*conn
 
 	requestDuration *prometheus.HistogramVec
-
-	readWriterFactory func(net.Conn) ReadWriter
 }
 
 // Item is an item to be got or stored in a memcached server.
@@ -221,23 +219,10 @@ type Item struct {
 	casid uint64
 }
 
-type ReadWriter interface {
-	io.ReadWriter
-	Reader
-
-	Flush() error
-}
-
-type Reader interface {
-	io.Reader
-
-	ReadSlice(delim byte) (line []byte, err error)
-}
-
 // conn is a connection to a server.
 type conn struct {
 	nc   net.Conn
-	rw   ReadWriter
+	rw   *bufio.ReadWriter
 	addr net.Addr
 	c    *Client
 
@@ -431,25 +416,17 @@ func (c *Client) getConn(addr net.Addr) (*conn, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	var rw ReadWriter
-	if c.readWriterFactory != nil {
-		rw = c.readWriterFactory(nc)
-	} else {
-		rw = bufio.NewReadWriter(bufio.NewReader(nc), bufio.NewWriter(nc))
-	}
-
 	cn = &conn{
 		nc:   nc,
 		addr: addr,
-		rw:   rw,
+		rw:   bufio.NewReadWriter(bufio.NewReader(nc), bufio.NewWriter(nc)),
 		c:    c,
 	}
 	cn.extendDeadline()
 	return cn, nil
 }
 
-func (c *Client) onItem(item *Item, operation string, fn func(*Client, ReadWriter, *Item) error) error {
+func (c *Client) onItem(item *Item, operation string, fn func(*Client, *bufio.ReadWriter, *Item) error) error {
 	addr, err := c.selector.PickServer(item.Key)
 	if err != nil {
 		return err
@@ -552,7 +529,7 @@ func (c *Client) getFromAddr(addr net.Addr, keys []string, opts *Options, cb fun
 		if err := rw.Flush(); err != nil {
 			return err
 		}
-		if err := c.parseGetResponse(rw, conn, opts, cb); err != nil {
+		if err := c.parseGetResponse(rw.Reader, conn, opts, cb); err != nil {
 			return err
 		}
 		return nil
@@ -691,7 +668,7 @@ func (c *Client) GetMulti(keys []string, opts ...Option) (map[string]*Item, erro
 
 // parseGetResponse reads a GET response from r and calls cb for each
 // read and allocated Item
-func (c *Client) parseGetResponse(r Reader, conn *conn, opts *Options, cb func(*Item)) error {
+func (c *Client) parseGetResponse(r *bufio.Reader, conn *conn, opts *Options, cb func(*Item)) error {
 	for {
 		// extend deadline before each additional call, otherwise all cumulative calls use the same overall deadline
 		conn.extendDeadline()
@@ -778,7 +755,7 @@ func (c *Client) Set(item *Item) error {
 	return c.onItem(item, "set", (*Client).set)
 }
 
-func (c *Client) set(rw ReadWriter, item *Item) error {
+func (c *Client) set(rw *bufio.ReadWriter, item *Item) error {
 	return c.populateOne(rw, "set", item)
 }
 
@@ -788,7 +765,7 @@ func (c *Client) Add(item *Item) error {
 	return c.onItem(item, "add", (*Client).add)
 }
 
-func (c *Client) add(rw ReadWriter, item *Item) error {
+func (c *Client) add(rw *bufio.ReadWriter, item *Item) error {
 	return c.populateOne(rw, "add", item)
 }
 
@@ -798,7 +775,7 @@ func (c *Client) Replace(item *Item) error {
 	return c.onItem(item, "replace", (*Client).replace)
 }
 
-func (c *Client) replace(rw ReadWriter, item *Item) error {
+func (c *Client) replace(rw *bufio.ReadWriter, item *Item) error {
 	return c.populateOne(rw, "replace", item)
 }
 
@@ -813,11 +790,11 @@ func (c *Client) CompareAndSwap(item *Item) error {
 	return c.onItem(item, "cas", (*Client).cas)
 }
 
-func (c *Client) cas(rw ReadWriter, item *Item) error {
+func (c *Client) cas(rw *bufio.ReadWriter, item *Item) error {
 	return c.populateOne(rw, "cas", item)
 }
 
-func (c *Client) populateOne(rw ReadWriter, verb string, item *Item) error {
+func (c *Client) populateOne(rw *bufio.ReadWriter, verb string, item *Item) error {
 	if !legalKey(item.Key) {
 		return ErrMalformedKey
 	}
@@ -858,7 +835,7 @@ func (c *Client) populateOne(rw ReadWriter, verb string, item *Item) error {
 	return fmt.Errorf("memcache: unexpected response line from %q: %q", verb, string(line))
 }
 
-func writeReadLine(rw ReadWriter, format string, args ...interface{}) ([]byte, error) {
+func writeReadLine(rw *bufio.ReadWriter, format string, args ...interface{}) ([]byte, error) {
 	_, err := fmt.Fprintf(rw, format, args...)
 	if err != nil {
 		return nil, err
@@ -870,7 +847,7 @@ func writeReadLine(rw ReadWriter, format string, args ...interface{}) ([]byte, e
 	return line, err
 }
 
-func writeExpectf(rw ReadWriter, expect []byte, format string, args ...interface{}) error {
+func writeExpectf(rw *bufio.ReadWriter, expect []byte, format string, args ...interface{}) error {
 	line, err := writeReadLine(rw, format, args...)
 	if err != nil {
 		return err
@@ -894,16 +871,14 @@ func writeExpectf(rw ReadWriter, expect []byte, format string, args ...interface
 // returned if the item didn't already exist in the cache.
 func (c *Client) Delete(key string) error {
 	return c.withKeyRw(key, "delete", func(conn *conn) error {
-		rw := conn.rw
-		return writeExpectf(rw, resultDeleted, "delete %s\r\n", key)
+		return writeExpectf(conn.rw, resultDeleted, "delete %s\r\n", key)
 	})
 }
 
 // DeleteAll deletes all items in the cache.
 func (c *Client) DeleteAll() error {
 	return c.withKeyRw("", "flush_all", func(conn *conn) error {
-		rw := conn.rw
-		return writeExpectf(rw, resultDeleted, "flush_all\r\n")
+		return writeExpectf(conn.rw, resultDeleted, "flush_all\r\n")
 	})
 }
 
