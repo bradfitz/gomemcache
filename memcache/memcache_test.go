@@ -590,8 +590,18 @@ func BenchmarkParseGetResponse(b *testing.B) {
 	c := &Client{}
 	reader := bufio.NewReader(response)
 
+	addr, err := net.ResolveTCPAddr("tcp", testServer)
+	if err != nil {
+		b.Fatalf("failed to resolve address %q: %q", testServer, err)
+	}
+
+	cn, err := c.getConn(addr)
+	if err != nil {
+		b.Fatalf("failed to get connection: %q", err)
+	}
+
 	for i := 0; i < b.N; i++ {
-		err := c.parseGetResponse(reader, opts, func(it *Item) {
+		err := c.parseGetResponse(reader, cn, opts, func(it *Item) {
 			opts.Alloc.Put(&it.Value)
 		})
 		if err != nil {
