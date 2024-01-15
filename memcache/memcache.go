@@ -156,6 +156,10 @@ type Client struct {
 
 	lk       sync.Mutex
 	freeconn map[string][]*conn
+
+	// When true, get is sent instead of gets when Client.Get() is called.
+	// Default false.
+	DisableCAS bool
 }
 
 // Item is an item to be got or stored in a memcached server.
@@ -379,8 +383,13 @@ func (c *Client) withKeyRw(key string, fn func(*bufio.ReadWriter) error) error {
 }
 
 func (c *Client) getFromAddr(addr net.Addr, keys []string, cb func(*Item)) error {
+	cmd := "gets"
+	if c.DisableCAS {
+		cmd = "get"
+	}
+
 	return c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
-		if _, err := fmt.Fprintf(rw, "gets %s\r\n", strings.Join(keys, " ")); err != nil {
+		if _, err := fmt.Fprintf(rw, "%s %s\r\n", cmd, strings.Join(keys, " ")); err != nil {
 			return err
 		}
 		if err := rw.Flush(); err != nil {
@@ -455,7 +464,7 @@ func (c *Client) touchFromAddr(addr net.Addr, keys []string, expiration int32) e
 			}
 			switch {
 			case bytes.Equal(line, resultTouched):
-				break
+				continue
 			case bytes.Equal(line, resultNotFound):
 				return ErrCacheMiss
 			default:
@@ -499,7 +508,7 @@ func (c *Client) GetMulti(keys []string) (map[string]*Item, error) {
 	}
 
 	var err error
-	for _ = range keyMap {
+	for range keyMap {
 		if ge := <-ch; ge != nil {
 			err = ge
 		}

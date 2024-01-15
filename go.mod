@@ -1,3 +1,3 @@
-module github.com/bradfitz/gomemcache
+module github.com/lovelock/gomemcache/v3
 
 go 1.18
