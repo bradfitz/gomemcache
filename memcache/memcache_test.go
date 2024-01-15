@@ -1,5 +1,5 @@
 /*
-Copyright 2011 Google Inc.
+Copyright 2011 The gomemcache AUTHORS
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -19,38 +19,42 @@ package memcache
 
 import (
 	"bufio"
+	"bytes"
+	"context"
+	"crypto/tls"
+	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 )
 
-const testServer = "localhost:11211"
+var debug = flag.Bool("debug", false, "be more verbose")
 
-func setup(t *testing.T) bool {
-	c, err := net.Dial("tcp", testServer)
-	if err != nil {
-		t.Skipf("skipping test; no server running at %s", testServer)
-	}
-	c.Write([]byte("flush_all\r\n"))
-	c.Close()
-	return true
-}
+const localhostTCPAddr = "localhost:11211"
 
 func TestLocalhost(t *testing.T) {
-	if !setup(t) {
-		return
+	t.Parallel()
+	c, err := net.Dial("tcp", localhostTCPAddr)
+	if err != nil {
+		t.Skipf("skipping test; no server running at %s", localhostTCPAddr)
 	}
-	testWithClient(t, New(testServer))
+	io.WriteString(c, "flush_all\r\n")
+	c.Close()
+
+	testWithClient(t, New(localhostTCPAddr))
 }
 
 // Run the memcached binary as a child process and connect to its unix socket.
 func TestUnixSocket(t *testing.T) {
+	t.Parallel()
 	sock := fmt.Sprintf("/tmp/test-gomemcache-%d.sock", os.Getpid())
 	cmd := exec.Command("memcached", "-s", sock)
 	if err := cmd.Start(); err != nil {
@@ -71,6 +75,91 @@ func TestUnixSocket(t *testing.T) {
 	testWithClient(t, New(sock))
 }
 
+func TestFakeServer(t *testing.T) {
+	t.Parallel()
+	ln, err := net.Listen("tcp", "localhost:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	t.Logf("running test server on %s", ln.Addr())
+	defer ln.Close()
+	srv := &testServer{}
+	go srv.Serve(ln)
+
+	testWithClient(t, New(ln.Addr().String()))
+}
+
+func TestTLS(t *testing.T) {
+	t.Parallel()
+	td := t.TempDir()
+
+	// Test whether our memcached binary has TLS support. We --enable-ssl first,
+	// before --version, as memcached evaluates the flags in the order provided
+	// and we want it to fail if it's built without TLS support (as it is in
+	// Debian, but not Ubuntu or Homebrew).
+	out, err := exec.Command("memcached", "--enable-ssl", "--version").CombinedOutput()
+	if err != nil {
+		t.Skipf("skipping test; couldn't find memcached or no TLS support in binary: %v, %s", err, out)
+	}
+	t.Logf("version: %s", bytes.TrimSpace(out))
+
+	if err := os.WriteFile(filepath.Join(td, "/cert.pem"), LocalhostCert, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(td, "/key.pem"), LocalhostKey, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Find some unused port. This is racy but we hope for the best and hope the kernel
+	// doesn't reassign our ephemeral port to somebody in the tiny race window.
+	ln, err := net.Listen("tcp", "localhost:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	ln.Close()
+
+	cmd := exec.Command("memcached",
+		"--port="+strconv.Itoa(port),
+		"--listen=127.0.0.1",
+		"--enable-ssl",
+		"-o", "ssl_chain_cert=cert.pem",
+		"-o", "ssl_key=key.pem")
+	cmd.Dir = td
+	if *debug {
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("failed to start memcached: %v", err)
+	}
+	defer cmd.Wait()
+	defer cmd.Process.Kill()
+
+	// Wait a bit for the server to be running.
+	for i := 0; i < 10; i++ {
+		nc, err := net.Dial("tcp", "localhost:"+strconv.Itoa(port))
+		if err == nil {
+			t.Logf("localhost:%d is up.", port)
+			nc.Close()
+			break
+		}
+		t.Logf("waiting for localhost:%d to be up...", port)
+		time.Sleep(time.Duration(25*i) * time.Millisecond)
+	}
+
+	c := New(net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	c.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		var td tls.Dialer
+		td.Config = &tls.Config{
+			InsecureSkipVerify: true,
+		}
+		return td.DialContext(ctx, network, addr)
+
+	}
+	testWithClient(t, c)
+}
+
 func mustSetF(t *testing.T, c *Client) func(*Item) {
 	return func(it *Item) {
 		if err := c.Set(it); err != nil {
@@ -81,6 +170,7 @@ func mustSetF(t *testing.T, c *Client) func(*Item) {
 
 func testWithClient(t *testing.T, c *Client) {
 	checkErr := func(err error, format string, args ...interface{}) {
+		t.Helper()
 		if err != nil {
 			t.Fatalf(format, args...)
 		}
@@ -88,20 +178,36 @@ func testWithClient(t *testing.T, c *Client) {
 	mustSet := mustSetF(t, c)
 
 	// Set
-	foo := &Item{Key: "foo", Value: []byte("fooval"), Flags: 123}
+	foo := &Item{Key: "foo", Value: []byte("fooval-fromset"), Flags: 123}
 	err := c.Set(foo)
 	checkErr(err, "first set(foo): %v", err)
 	err = c.Set(foo)
 	checkErr(err, "second set(foo): %v", err)
 
-	// Get
+	// CompareAndSwap
 	it, err := c.Get("foo")
+	checkErr(err, "get(foo): %v", err)
+	if string(it.Value) != "fooval-fromset" {
+		t.Errorf("get(foo) Value = %q, want fooval-romset", it.Value)
+	}
+	it0, err := c.Get("foo") // another get, to fail our CAS later
+	checkErr(err, "get(foo): %v", err)
+	it.Value = []byte("fooval")
+	err = c.CompareAndSwap(it)
+	checkErr(err, "cas(foo): %v", err)
+	it0.Value = []byte("should-fail")
+	if err := c.CompareAndSwap(it0); err != ErrCASConflict {
+		t.Fatalf("cas(foo) error = %v; want ErrCASConflict", err)
+	}
+
+	// Get
+	it, err = c.Get("foo")
 	checkErr(err, "get(foo): %v", err)
 	if it.Key != "foo" {
 		t.Errorf("get(foo) Key = %q, want foo", it.Key)
 	}
 	if string(it.Value) != "fooval" {
-		t.Errorf("get(foo) Value = %q, want fooval", string(it.Value))
+		t.Errorf("get(foo) Value = %q, want fooval", it.Value)
 	}
 	if it.Flags != 123 {
 		t.Errorf("get(foo) Flags = %v, want 123", it.Flags)
@@ -139,6 +245,34 @@ func testWithClient(t *testing.T, c *Client) {
 	checkErr(err, "first add(foo): %v", err)
 	if err := c.Add(bar); err != ErrNotStored {
 		t.Fatalf("second add(foo) want ErrNotStored, got %v", err)
+	}
+
+	// Append
+	append := &Item{Key: "append", Value: []byte("appendval")}
+	if err := c.Append(append); err != ErrNotStored {
+		t.Fatalf("first append(append) want ErrNotStored, got %v", err)
+	}
+	c.Set(append)
+	err = c.Append(&Item{Key: "append", Value: []byte("1")})
+	checkErr(err, "second append(append): %v", err)
+	appended, err := c.Get("append")
+	checkErr(err, "third append(append): %v", err)
+	if string(appended.Value) != string(append.Value)+"1" {
+		t.Fatalf("Append: want=append1, got=%s", string(appended.Value))
+	}
+
+	// Prepend
+	prepend := &Item{Key: "prepend", Value: []byte("prependval")}
+	if err := c.Prepend(prepend); err != ErrNotStored {
+		t.Fatalf("first prepend(prepend) want ErrNotStored, got %v", err)
+	}
+	c.Set(prepend)
+	err = c.Prepend(&Item{Key: "prepend", Value: []byte("1")})
+	checkErr(err, "second prepend(prepend): %v", err)
+	prepended, err := c.Get("prepend")
+	checkErr(err, "third prepend(prepend): %v", err)
+	if string(prepended.Value) != "1"+string(prepend.Value) {
+		t.Fatalf("Prepend: want=1prepend, got=%s", string(prepended.Value))
 	}
 
 	// Replace
@@ -252,7 +386,7 @@ func testTouchWithClient(t *testing.T, c *Client) {
 	}
 
 	_, err = c.Get("bar")
-	if nil == err {
+	if err == nil {
 		t.Fatalf("item bar did not expire within %v seconds", time.Now().Sub(setTime).Seconds())
 	} else {
 		if err != ErrCacheMiss {

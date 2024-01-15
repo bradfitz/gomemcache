@@ -43,19 +43,14 @@ After this command _gomemcache_ is ready to use. Its source will be in:
 
 ## Example
 
-### For vanilla memcached server
-
+Install with:
 ```go
 import (
     "github.com/lovelock/gomemcache/v3/memcache"
 )
-
 func main() {
-    mc := memcache.New("10.0.0.1:11211", "10.0.0.2:11211", "10.0.0.3:11212")
-    mc.Set(&memcache.Item{Key: "foo", Value: []byte("my value")})
-
-    it, err := mc.Get("foo")
-        ...
+     mc := memcache.New("10.0.0.1:11211", "10.0.0.2:11211", "10.0.0.3:11212")
+     mc.Set(&memcache.Item{Key: "foo", Value: []byte("my value")})
 }
 ```
 
