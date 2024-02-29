@@ -539,6 +539,33 @@ func TestClient_Close_ShouldBeIdempotent(t *testing.T) {
 	c.Close()
 }
 
+func BenchmarkGetMulti(b *testing.B) {
+	c := New(testServer)
+	defer c.Close()
+
+	var keys []string
+	for i := 0; i < 100; i++ {
+		key := fmt.Sprintf("bench-%d", i)
+		keys = append(keys, key)
+
+		err := c.Set(&Item{
+			Key:        key,
+			Value:      []byte(strings.Repeat("bench payload", 10)),
+			Flags:      0,
+			Expiration: 30,
+			casid:      0,
+		})
+		if err != nil {
+			b.Fatal("Could not set item for test server: ", err)
+		}
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = c.GetMulti(keys)
+	}
+}
+
 func BenchmarkOnItem(b *testing.B) {
 	fakeServer, err := net.Listen("tcp", "localhost:0")
 	if err != nil {
