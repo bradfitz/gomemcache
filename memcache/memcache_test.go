@@ -48,8 +48,11 @@ func TestLocalhost(t *testing.T) {
 	}
 	io.WriteString(c, "flush_all\r\n")
 	c.Close()
-
-	testWithClient(t, New(localhostTCPAddr))
+	client, err := New(localhostTCPAddr)
+	if err != nil {
+		t.Fatalf("error creating client: %v", err)
+	}
+	testWithClient(t, client)
 }
 
 // Run the memcached binary as a child process and connect to its unix socket.
@@ -71,8 +74,11 @@ func TestUnixSocket(t *testing.T) {
 		}
 		time.Sleep(time.Duration(25*i) * time.Millisecond)
 	}
-
-	testWithClient(t, New(sock))
+	client, err := New(sock)
+	if err != nil {
+		t.Fatalf("error creating client: %v", err)
+	}
+	testWithClient(t, client)
 }
 
 func TestFakeServer(t *testing.T) {
@@ -86,7 +92,11 @@ func TestFakeServer(t *testing.T) {
 	srv := &testServer{}
 	go srv.Serve(ln)
 
-	testWithClient(t, New(ln.Addr().String()))
+	client, err := New(ln.Addr().String())
+	if err != nil {
+		t.Fatalf("error creating client: %v", err)
+	}
+	testWithClient(t, client)
 }
 
 func TestTLS(t *testing.T) {
@@ -148,7 +158,7 @@ func TestTLS(t *testing.T) {
 		time.Sleep(time.Duration(25*i) * time.Millisecond)
 	}
 
-	c := New(net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	c, err := New(net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 	c.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		var td tls.Dialer
 		td.Config = &tls.Config{
@@ -412,7 +422,7 @@ func BenchmarkOnItem(b *testing.B) {
 	}()
 
 	addr := fakeServer.Addr()
-	c := New(addr.String())
+	c, err := New(addr.String())
 	if _, err := c.getConn(addr); err != nil {
 		b.Fatal("failed to initialize connection to fake server")
 	}
