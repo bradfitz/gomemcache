@@ -1,5 +1,7 @@
 name: Test
-on: [push]
+on:
+  push:
+  pull_request:
 
 jobs:
   build:
@@ -11,7 +13,9 @@ jobs:
 
     steps:
       - name: install memcached
-        run: sudo apt-get install memcached
+        run: |
+          sudo apt update
+          sudo apt install memcached
       - uses: actions/checkout@v3
       - name: Setup Go ${{ matrix.go-version }}
         uses: actions/setup-go@v4
