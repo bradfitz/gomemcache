@@ -419,9 +419,9 @@ func (c *Client) flushAllFromAddr(addr net.Addr) error {
 	})
 }
 
-// ping sends the version command to the given addr
-func (c *Client) ping(addr net.Addr) error {
-	return c.withAddrRw(addr, func(conn *conn) error {
+func (c *Client) version(addr net.Addr) (string, error) {
+	var version string
+	err := c.withAddrRw(addr, func(conn *conn) error {
 		rw := conn.rw
 		if _, err := fmt.Fprintf(rw, "version\r\n"); err != nil {
 			return err
@@ -433,15 +433,20 @@ func (c *Client) ping(addr net.Addr) error {
 		if err != nil {
 			return err
 		}
-
-		switch {
-		case bytes.HasPrefix(line, versionPrefix):
-			break
-		default:
-			return fmt.Errorf("memcache: unexpected response line from ping: %q", string(line))
+		if !bytes.HasPrefix(line, versionPrefix) {
+			return fmt.Errorf("memcache: unexpected response line from version: %q", string(line))
 		}
+		// Then we expect a space and the version string
+		version = string(bytes.TrimSpace(line[len(versionPrefix):]))
 		return nil
 	})
+	return version, err
+}
+
+// ping sends the version command to the given addr
+func (c *Client) ping(addr net.Addr) error {
+	_, err := c.version(addr)
+	return err
 }
 
 func (c *Client) touchFromAddr(addr net.Addr, keys []string, expiration int32) error {
@@ -782,6 +787,19 @@ func (c *Client) getAndTouchFromAddr(addr net.Addr, key string, expiration int32
 // of them is down.
 func (c *Client) Ping() error {
 	return c.selector.Each(c.ping)
+}
+
+func (c *Client) Version() (map[string]string, error) {
+	versionMap := make(map[string]string)
+	err := c.selector.Each(func(addr net.Addr) error {
+		version, err := c.version(addr)
+		if err != nil {
+			return err
+		}
+		versionMap[addr.String()] = version
+		return nil
+	})
+	return versionMap, err
 }
 
 // Increment atomically increments key by delta. The return value is
