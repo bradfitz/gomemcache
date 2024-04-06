@@ -343,6 +343,10 @@ func testWithClient(t *testing.T, c *Client) {
 		t.Errorf("post-DeleteAll want ErrCacheMiss, got %v", err)
 	}
 
+	// Test Version
+	_, err = c.Version()
+	checkErr(err, "Version: %v", err)
+
 	// Test Ping
 	err = c.Ping()
 	checkErr(err, "error ping: %s", err)
