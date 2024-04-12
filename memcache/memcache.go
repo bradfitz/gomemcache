@@ -119,8 +119,7 @@ var (
 // with equal weight. If a server is listed multiple times,
 // it gets a proportional amount of weight.
 func New(server ...string) *Client {
-	ss := new(ServerList)
-	ss.SetServers(server...)
+	ss := NewJumpConsistentHash(500, server...)
 	return NewFromSelector(ss)
 }
 
