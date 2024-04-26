@@ -1,15 +1,12 @@
 package memcache
 
 import (
-	"fmt"
-	"hash"
-	"math/rand"
 	"net"
-	"sort"
 	"strings"
 	"sync"
 
-	"github.com/spaolacci/murmur3" // Import MurmurHash3
+	"github.com/dgryski/go-rendezvous"
+	"github.com/spaolacci/murmur3"
 )
 
 // ServerSelector is the interface that selects a memcache server
@@ -24,115 +21,95 @@ type ServerSelector interface {
 	Each(func(net.Addr) error) error
 }
 
-// JumpConsistentHash is a ServerSelector implementation using jump consistent hashing.
-type JumpConsistentHash struct {
-	mu           sync.RWMutex
-	replicaCount int
-	hashMap      map[string]int // Key: hashed key string, Value: server index
-	servers      []string
-	hashFunc     hash.Hash // MurmurHash3 function
+// ServerList is a simple ServerSelector. Its zero value is usable.
+type ServerList struct {
+	mu               sync.RWMutex
+	addrs            []net.Addr
+	rendezvousHasher *rendezvous.Rendezvous
 }
 
-// NewJumpConsistentHash creates a new JumpConsistentHash instance.
-func NewJumpConsistentHash(replicaCount int, servers ...string) *JumpConsistentHash {
-	if replicaCount <= 0 {
-		return nil
+// staticAddr caches the Network() and String() values from any net.Addr.
+type staticAddr struct {
+	ntw, str string
+}
+
+func newStaticAddr(a net.Addr) net.Addr {
+	return &staticAddr{
+		ntw: a.Network(),
+		str: a.String(),
 	}
-	h := &JumpConsistentHash{
-		replicaCount: replicaCount,
-		hashMap:      make(map[string]int),
-		servers:      servers,
-		hashFunc:     murmur3.New32(), // Create MurmurHash3 function
+}
+
+func (s *staticAddr) Network() string { return s.ntw }
+func (s *staticAddr) String() string  { return s.str }
+
+func (s *ServerList) NewRendezvousHash(servers ...string) *rendezvous.Rendezvous {
+	var nodes []string
+	nodes = append(nodes, servers...)
+	hrw := rendezvous.New(nodes, func(s string) uint64 {
+		return murmur3.Sum64([]byte(s)) // Using MurmurHash3 for hashing
+	})
+	return hrw
+}
+
+// SetServers changes a ServerList's set of servers at runtime and is
+// safe for concurrent use by multiple goroutines.
+//
+// Each server is given equal weight. A server is given more weight
+// if it's listed multiple times.
+//
+// SetServers returns an error if any of the server names fail to
+// resolve. No attempt is made to connect to the server. If any error
+// is returned, no changes are made to the ServerList.
+func (ss *ServerList) SetServers(servers ...string) error {
+	naddr := make([]net.Addr, len(servers))
+	for i, server := range servers {
+		if strings.Contains(server, "/") {
+			addr, err := net.ResolveUnixAddr("unix", server)
+			if err != nil {
+				return err
+			}
+			naddr[i] = newStaticAddr(addr)
+		} else {
+			tcpaddr, err := net.ResolveTCPAddr("tcp", server)
+			if err != nil {
+				return err
+			}
+			naddr[i] = newStaticAddr(tcpaddr)
+		}
 	}
-	err := h.addServers()
-	if err != nil {
-		return h
-	}
+
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+	ss.addrs = naddr
+	hrw := ss.NewRendezvousHash(servers...)
+	ss.rendezvousHasher = hrw
 	return nil
 }
 
-// addServers adds all servers to the jump consistent hash ring with replicas.
-func (h *JumpConsistentHash) addServers() error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	for i, server := range h.servers {
-		for j := 0; j < h.replicaCount; j++ {
-			key := fmt.Sprintf("%s:%d", server, j)
-			h.hashFunc.Write([]byte(key))
-			h.hashMap[fmt.Sprintf("%x", h.hashFunc.Sum(nil))] = i // Store server index
-			h.hashFunc.Reset()                                    // Reset hash for next replica
+// Each iterates over each server calling the given function
+func (ss *ServerList) Each(f func(net.Addr) error) error {
+	ss.mu.RLock()
+	defer ss.mu.RUnlock()
+	for _, a := range ss.addrs {
+		if err := f(a); nil != err {
+			return err
 		}
 	}
 	return nil
 }
 
 // PickServer finds the server responsible for a given key using jump consistent hashing.
-func (h *JumpConsistentHash) PickServer(key string) (net.Addr, error) {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	if len(h.servers) == 0 {
+func (ss *ServerList) PickServer(key string) (net.Addr, error) {
+	ss.mu.RLock()
+	defer ss.mu.RUnlock()
+	if len(ss.addrs) == 0 {
 		return nil, ErrNoServers
 	}
-
-	h.hashFunc.Write([]byte(key)) // Reuse existing MurmurHash3 function
-	hashedKey := fmt.Sprintf("%x", h.hashFunc.Sum(nil))
-
-	var serverIndex int
-	for { // Loop until a server is found
-		jump := (func() int {
-			h.mu.RUnlock()     // Release read lock while generating random number
-			defer h.mu.RLock() // Reacquire read lock before accessing hashMap
-			return rand.Intn(len(h.hashMap))
-		})()
-		jumpKey := fmt.Sprintf("%x", murmur3.New32().Sum([]byte(fmt.Sprintf("%x:%d", hashedKey, jump)))) // Create new MurmurHash3 for jump
-		for k, v := range h.hashMap {
-			if k >= jumpKey {
-				serverIndex = v
-				break
-			}
-		}
-		if serverIndex != 0 {
-			break // Found a server responsible for the jumpKey
-		}
+	node := ss.rendezvousHasher.Lookup(key)
+	addr, err := net.ResolveUnixAddr("unix", node)
+	if err != nil {
+		return nil, err
 	}
-
-	if serverIndex == 0 {
-		serverIndex = len(h.hashMap) // Wrap around to first server if no match found
-	}
-
-	return h.getServerAddr(serverIndex)
-}
-
-// getServerAddr returns the net.Addr for a given server index.
-func (h *JumpConsistentHash) getServerAddr(index int) (net.Addr, error) {
-	if index < 0 || index >= len(h.servers) {
-		return nil, fmt.Errorf("invalid server index: %d", index)
-	}
-	server := h.servers[index]
-	if strings.Contains(server, "/") {
-		return net.ResolveUnixAddr("unix", server)
-	}
-	return net.ResolveTCPAddr("tcp", server)
-}
-
-// Each iterates over each server calling the given function
-func (h *JumpConsistentHash) Each(f func(net.Addr) error) error {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-
-	// Sort servers for deterministic iteration
-	sortedServers := make([]string, len(h.servers))
-	copy(sortedServers, h.servers)
-	sort.Strings(sortedServers)
-
-	for _, server := range sortedServers {
-		addr, err := h.getServerAddr(h.hashMap[fmt.Sprintf("%x", murmur3.New32().Sum([]byte(server)))]) // Find server index using key hash
-		if err != nil {
-			return err
-		}
-		if err := f(addr); err != nil {
-			return err
-		}
-	}
-	return nil
+	return newStaticAddr(addr), nil
 }

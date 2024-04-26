@@ -119,7 +119,8 @@ var (
 // with equal weight. If a server is listed multiple times,
 // it gets a proportional amount of weight.
 func New(server ...string) *Client {
-	ss := NewJumpConsistentHash(500, server...)
+	ss := new(ServerList)
+	ss.SetServers(server...)
 	return NewFromSelector(ss)
 }
 
@@ -356,6 +357,7 @@ func (c *Client) withKeyAddr(key string, fn func(net.Addr) error) (err error) {
 		return ErrMalformedKey
 	}
 	addr, err := c.selector.PickServer(key)
+	fmt.Println(fmt.Sprintf("Address for key %s is %s", key, addr))
 	if err != nil {
 		return err
 	}
