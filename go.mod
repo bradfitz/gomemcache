@@ -1,4 +1,4 @@
-module github.com/carwale/gomemcache
+module github.com/carwale/memcache
 
 go 1.18
 
