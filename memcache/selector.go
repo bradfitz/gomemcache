@@ -26,6 +26,7 @@ type ServerList struct {
 	mu               sync.RWMutex
 	addrs            []net.Addr
 	rendezvousHasher *rendezvous.Rendezvous
+	strAddrs         map[string]net.Addr
 }
 
 // staticAddr caches the Network() and String() values from any net.Addr.
@@ -63,12 +64,14 @@ func (s *ServerList) NewRendezvousHash(servers ...string) *rendezvous.Rendezvous
 // is returned, no changes are made to the ServerList.
 func (ss *ServerList) SetServers(servers ...string) error {
 	naddr := make([]net.Addr, len(servers))
+	strAddrs := make(map[string]net.Addr)
 	for i, server := range servers {
 		if strings.Contains(server, "/") {
 			addr, err := net.ResolveUnixAddr("unix", server)
 			if err != nil {
 				return err
 			}
+			strAddrs[server] = newStaticAddr(addr)
 			naddr[i] = newStaticAddr(addr)
 		} else {
 			tcpaddr, err := net.ResolveTCPAddr("tcp", server)
@@ -76,12 +79,14 @@ func (ss *ServerList) SetServers(servers ...string) error {
 				return err
 			}
 			naddr[i] = newStaticAddr(tcpaddr)
+			strAddrs[server] = newStaticAddr(tcpaddr)
 		}
 	}
 
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
 	ss.addrs = naddr
+	ss.strAddrs = strAddrs
 	hrw := ss.NewRendezvousHash(servers...)
 	ss.rendezvousHasher = hrw
 	return nil
@@ -107,9 +112,5 @@ func (ss *ServerList) PickServer(key string) (net.Addr, error) {
 		return nil, ErrNoServers
 	}
 	node := ss.rendezvousHasher.Lookup(key)
-	addr, err := net.ResolveUnixAddr("unix", node)
-	if err != nil {
-		return nil, err
-	}
-	return newStaticAddr(addr), nil
+	return ss.strAddrs[node], nil
 }
