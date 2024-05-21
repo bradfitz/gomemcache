@@ -87,8 +87,7 @@ func (ss *ServerList) SetServers(servers ...string) error {
 	defer ss.mu.Unlock()
 	ss.addrs = naddr
 	ss.strAddrs = strAddrs
-	hrw := ss.NewRendezvousHash(servers...)
-	ss.rendezvousHasher = hrw
+	ss.rendezvousHasher = ss.NewRendezvousHash(servers...)
 	return nil
 }
 
