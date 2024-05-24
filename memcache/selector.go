@@ -44,7 +44,34 @@ func newStaticAddr(a net.Addr) net.Addr {
 func (s *staticAddr) Network() string { return s.ntw }
 func (s *staticAddr) String() string  { return s.str }
 
-func (s *ServerList) NewRendezvousHash(servers ...string) *rendezvous.Rendezvous {
+// NewServerPicker initializes a new rendezvous hash-based server picker with the provided servers.
+//
+// The function takes a variable number of string arguments representing server addresses and returns
+// a *rendezvous.Rendezvous object which can be used to consistently and efficiently map keys to servers.
+//
+// Parameters:
+//
+//	servers ...string - A variadic parameter representing the list of servers to be added to the rendezvous hash.
+//
+// Returns:
+//
+//	*rendezvous.Rendezvous - A pointer to a Rendezvous object initialized with the provided servers.
+//
+// The function utilizes the MurmurHash3 algorithm for hashing server addresses.
+//
+// Example:
+//
+//	servers := []string{"server1", "server2", "server3"}
+//	picker := serverList.NewServerPicker(servers...)
+//
+// Note:
+//
+//	The MurmurHash3 algorithm is chosen for its speed and good distribution properties.
+//
+// See also:
+//
+//	rendezvous.New - for more details on the creation and behavior of Rendezvous objects.
+func (s *ServerList) NewServerPicker(servers ...string) *rendezvous.Rendezvous {
 	var nodes []string
 	nodes = append(nodes, servers...)
 	hrw := rendezvous.New(nodes, func(s string) uint64 {
@@ -87,7 +114,7 @@ func (ss *ServerList) SetServers(servers ...string) error {
 	defer ss.mu.Unlock()
 	ss.addrs = naddr
 	ss.strAddrs = strAddrs
-	ss.rendezvousHasher = ss.NewRendezvousHash(servers...)
+	ss.rendezvousHasher = ss.NewServerPicker(servers...)
 	return nil
 }
 
@@ -103,12 +130,27 @@ func (ss *ServerList) Each(f func(net.Addr) error) error {
 	return nil
 }
 
-// PickServer finds the server responsible for a given key using jump consistent hashing.
+/**
+ * Picks a server from the ServerList based on the provided key using a rendezvous hashing algorithm.
+ *
+ * This function retrieves a read lock on the internal mutex (`mu`) to ensure thread-safety during access to the server list. The lock is automatically released when the function exits (using `defer`).
+ *
+ * If the server list is empty (`len(ss.addrs) == 0`), it returns an error (`ErrNoServers`) indicating no available servers.
+ *
+ * Otherwise, it uses the configured rendezvous hashing function (`ss.rendezvousHasher.Lookup(key)`) to map the provided key to a specific node (server) within the server list.
+ * Finally, it returns the address of the selected server (`ss.strAddrs[node]`) and nil error.
+ *
+ * @param key string The key to use for server selection through the rendezvous hashing algorithm.
+ * @return net.Addr, error A tuple containing the address of the chosen server and a potential error. The error will be `ErrNoServers` if no servers are available, otherwise nil.
+ */
 func (ss *ServerList) PickServer(key string) (net.Addr, error) {
 	ss.mu.RLock()
 	defer ss.mu.RUnlock()
 	if len(ss.addrs) == 0 {
 		return nil, ErrNoServers
+	}
+	if len(ss.addrs) == 1 {
+		return ss.addrs[0], nil
 	}
 	node := ss.rendezvousHasher.Lookup(key)
 	return ss.strAddrs[node], nil
