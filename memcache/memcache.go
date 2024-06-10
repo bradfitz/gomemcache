@@ -357,7 +357,6 @@ func (c *Client) withKeyAddr(key string, fn func(net.Addr) error) (err error) {
 		return ErrMalformedKey
 	}
 	addr, err := c.selector.PickServer(key)
-	fmt.Println(fmt.Sprintf("Address for key %s is %s", key, addr))
 	if err != nil {
 		return err
 	}
