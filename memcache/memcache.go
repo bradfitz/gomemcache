@@ -706,6 +706,33 @@ func (c *Client) DeleteAll() error {
 	})
 }
 
+// Get and Touch the item with the provided key. The error ErrCacheMiss is
+// returned if the item didn't already exist in the cache.
+func (c *Client) GetAndTouch(key string, expiration int32) (item *Item, err error) {
+	err = c.withKeyAddr(key, func(addr net.Addr) error {
+		return c.getAndTouchFromAddr(addr, key, expiration, func(it *Item) { item = it })
+	})
+	if err == nil && item == nil {
+		err = ErrCacheMiss
+	}
+	return
+}
+
+func (c *Client) getAndTouchFromAddr(addr net.Addr, key string, expiration int32, cb func(*Item)) error {
+	return c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
+		if _, err := fmt.Fprintf(rw, "gat %d %s\r\n", expiration, key); err != nil {
+			return err
+		}
+		if err := rw.Flush(); err != nil {
+			return err
+		}
+		if err := parseGetResponse(rw.Reader, cb); err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
 // Ping checks all instances if they are alive. Returns error if any
 // of them is down.
 func (c *Client) Ping() error {
