@@ -21,7 +21,6 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 	"os"
 	"os/exec"
@@ -575,7 +574,7 @@ func BenchmarkOnItem(b *testing.B) {
 	go func() {
 		for {
 			if c, err := fakeServer.Accept(); err == nil {
-				go func() { _, _ = io.Copy(ioutil.Discard, c) }()
+				go func() { _, _ = io.Copy(io.Discard, c) }()
 			} else {
 				return
 			}
