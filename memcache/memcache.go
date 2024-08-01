@@ -130,7 +130,9 @@ var (
 func New(server ...string) *Client {
 	ss := new(ServerList)
 	_ = ss.SetServers(server...)
-	return NewFromSelector(ss)
+	c := NewFromSelector(ss)
+	c.serverList = append(c.serverList, server...)
+	return c
 }
 
 // NewFromSelector returns a new Client using the provided ServerSelector.
@@ -199,6 +201,8 @@ type Client struct {
 
 	lk       sync.Mutex
 	freeconn map[string][]*conn
+
+	serverList []string
 }
 
 // Item is an item to be got or stored in a memcached server.
@@ -421,11 +425,18 @@ func (c *Client) getConn(addr net.Addr) (*conn, error) {
 		return cn, nil
 	}
 	nc, err := c.dial(addr)
-	var te *ConnectTimeoutError
-	if errors.As(err, &te) {
-		fmt.Println("hi")
-	}
 	if err != nil {
+		var te *ConnectTimeoutError
+		if errors.As(err, &te) {
+			// If there is a connection timeout, it may be the case that the connection has been lost, for example when there is an ip change.
+			// We attempt to establish a fresh connection to the provided server in the background
+			if ss, ok := c.selector.(*ServerList); ok {
+				if reconnectErr := ss.SetServers(c.serverList...); reconnectErr != nil {
+					return nil, errors.Join(err, fmt.Errorf("reconnect failed: %w", reconnectErr))
+				}
+			}
+		}
+
 		return nil, err
 	}
 
