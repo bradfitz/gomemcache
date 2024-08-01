@@ -421,6 +421,10 @@ func (c *Client) getConn(addr net.Addr) (*conn, error) {
 		return cn, nil
 	}
 	nc, err := c.dial(addr)
+	var te *ConnectTimeoutError
+	if errors.As(err, &te) {
+		fmt.Println("hi")
+	}
 	if err != nil {
 		return nil, err
 	}
