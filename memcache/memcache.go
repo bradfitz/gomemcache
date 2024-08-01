@@ -424,20 +424,25 @@ func (c *Client) getConn(addr net.Addr) (*conn, error) {
 		cn.extendDeadline()
 		return cn, nil
 	}
-	nc, err := c.dial(addr)
-	if err != nil {
-		var te *ConnectTimeoutError
-		if errors.As(err, &te) {
-			// If there is a connection timeout, it may be the case that the connection has been lost, for example when there is an ip change.
-			// We attempt to establish a fresh connection to the provided server in the background
-			if ss, ok := c.selector.(*ServerList); ok {
-				if reconnectErr := ss.SetServers(c.serverList...); reconnectErr != nil {
-					return nil, errors.Join(err, fmt.Errorf("reconnect failed: %w", reconnectErr))
-				}
-			}
-		}
 
+	nc, err := c.dial(addr)
+	// Attempt to recover from connection timeouts below
+	var te *ConnectTimeoutError
+	if err != nil && !errors.As(err, &te) {
 		return nil, err
+	}
+
+	// If there is a connection timeout, it may be the case that the connection has been lost, for example when there is an ip change.
+	// We attempt to establish a fresh connection to the provided server in the background
+	if ss, ok := c.selector.(*ServerList); ok {
+		if reconnectErr := ss.SetServers(c.serverList...); reconnectErr != nil {
+			return nil, errors.Join(err, fmt.Errorf("reconnect failed: %w", reconnectErr))
+		}
+		// attempt to dial again and give up if it still fails
+		nc, err = c.dial(addr)
+		if err == nil {
+			return nil, err
+		}
 	}
 
 	// Init buffered writer.
