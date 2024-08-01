@@ -440,7 +440,7 @@ func (c *Client) getConn(addr net.Addr) (*conn, error) {
 		}
 		// attempt to dial again and give up if it still fails
 		nc, err = c.dial(addr)
-		if err == nil {
+		if err != nil {
 			return nil, err
 		}
 	}
