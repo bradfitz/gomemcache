@@ -19,7 +19,6 @@ package memcache
 
 import (
 	"bufio"
-	"context"
 	"fmt"
 	"io"
 	"net"
@@ -49,7 +48,7 @@ func TestLocalhost(t *testing.T) {
 		return
 	}
 
-	c := New(context.Background(), testServer)
+	c := New(testServer)
 	t.Cleanup(c.Close)
 
 	testWithClient(t, c)
@@ -76,7 +75,7 @@ func TestUnixSocket(t *testing.T) {
 		time.Sleep(time.Duration(25*i) * time.Millisecond)
 	}
 
-	c := New(context.Background(), sock)
+	c := New(sock)
 	t.Cleanup(c.Close)
 
 	testWithClient(t, c)
@@ -308,7 +307,7 @@ func TestClient_releaseIdleConnections(t *testing.T) {
 	const recentlyUsedThreshold = 2 * time.Second
 
 	getClientWithMinIdleConnsHeadroomPercentage := func(t *testing.T, headroomPercentage float64) *Client {
-		c := New(context.Background(), testServer)
+		c := New(testServer)
 		t.Cleanup(c.Close)
 		c.MinIdleConnsHeadroomPercentage = headroomPercentage
 		c.MaxIdleConns = 100
@@ -532,7 +531,7 @@ func TestClient_releaseIdleConnections(t *testing.T) {
 }
 
 func TestClient_Close_ShouldBeIdempotent(t *testing.T) {
-	c := New(context.Background(), testServer)
+	c := New(testServer)
 
 	// Call Close twice and make sure it doesn't panic the 2nd time.
 	c.Close()
@@ -540,7 +539,7 @@ func TestClient_Close_ShouldBeIdempotent(t *testing.T) {
 }
 
 func BenchmarkGetMulti(b *testing.B) {
-	c := New(context.Background(), testServer)
+	c := New(testServer)
 	defer c.Close()
 
 	var keys []string
@@ -583,7 +582,7 @@ func BenchmarkOnItem(b *testing.B) {
 	}()
 
 	addr := fakeServer.Addr()
-	c := New(context.Background(), addr.String())
+	c := New(addr.String())
 	b.Cleanup(c.Close)
 
 	if _, err := c.getConn(addr); err != nil {

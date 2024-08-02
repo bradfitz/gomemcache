@@ -128,11 +128,18 @@ var (
 // New returns a memcache client using the provided server(s)
 // with equal weight. If a server is listed multiple times,
 // it gets a proportional amount of weight.
-func New(ctx context.Context, server ...string) *Client {
+func New(server ...string) *Client {
 	ss := new(ServerList)
 	_ = ss.SetServers(server...)
 	c := NewFromSelector(ss)
 	c.serverList = append(c.serverList, server...)
+
+	return c
+}
+
+// NewWithReconnect returns the same thing as New(server ...string), but takes a context to initiate a bakground reconnect
+func NewWithReconnect(ctx context.Context, server ...string) *Client {
+	c := New(server...)
 
 	// periodically reestablish connection to the provided servers
 	go func() {
