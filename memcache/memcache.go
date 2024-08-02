@@ -134,8 +134,8 @@ func New(ctx context.Context, server ...string) *Client {
 	c := NewFromSelector(ss)
 	c.serverList = append(c.serverList, server...)
 
+	// periodically reestablish connection to the provided servers
 	go func() {
-		context.Background()
 		ticker := time.NewTicker(10 * time.Minute)
 		for {
 			select {
@@ -946,11 +946,12 @@ func (c *Client) incrDecr(verb, key string, delta uint64) (uint64, error) {
 
 // backgroundReconnect makes an asyncronous attempt to reconnect to the provided server list
 func (c *Client) backgroundReconnect() {
-	// don't want this to be spammed by multiple goroutines and back up waiting for the lock
+	// avoid a backup waiting for the lock
 	go c.reconnectOnce.Do(func() {
 		defer func() {
 			c.reconnectOnce = sync.Once{}
 		}()
+
 		if sl, ok := c.selector.(*ServerList); ok {
 			_ = sl.SetServers(c.serverList...)
 		}
