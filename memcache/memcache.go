@@ -20,6 +20,7 @@ package memcache
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -127,11 +128,25 @@ var (
 // New returns a memcache client using the provided server(s)
 // with equal weight. If a server is listed multiple times,
 // it gets a proportional amount of weight.
-func New(server ...string) *Client {
+func New(ctx context.Context, server ...string) *Client {
 	ss := new(ServerList)
 	_ = ss.SetServers(server...)
 	c := NewFromSelector(ss)
 	c.serverList = append(c.serverList, server...)
+
+	go func() {
+		context.Background()
+		ticker := time.NewTicker(10 * time.Minute)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				c.backgroundReconnect()
+			}
+		}
+	}()
+
 	return c
 }
 
@@ -202,7 +217,8 @@ type Client struct {
 	lk       sync.Mutex
 	freeconn map[string][]*conn
 
-	serverList []string
+	serverList    []string
+	reconnectOnce sync.Once
 }
 
 // Item is an item to be got or stored in a memcached server.
@@ -407,6 +423,9 @@ func (c *Client) dial(addr net.Addr) (net.Conn, error) {
 	}
 
 	if ne, ok := err.(net.Error); ok && ne.Timeout() {
+		// In the case of a timeout, we might need to reestablish a connection to one or more servers, for example in case of an IP change
+		// Fire this off in a goroutine so it doesn't delay a response back to the client
+		c.backgroundReconnect()
 		return nil, &ConnectTimeoutError{addr}
 	}
 
@@ -923,4 +942,17 @@ func (c *Client) incrDecr(verb, key string, delta uint64) (uint64, error) {
 		return nil
 	})
 	return val, err
+}
+
+// backgroundReconnect makes an asyncronous attempt to reconnect to the provided server list
+func (c *Client) backgroundReconnect() {
+	// don't want this to be spammed by multiple goroutines and back up waiting for the lock
+	go c.reconnectOnce.Do(func() {
+		defer func() {
+			c.reconnectOnce = sync.Once{}
+		}()
+		if sl, ok := c.selector.(*ServerList); ok {
+			_ = sl.SetServers(c.serverList...)
+		}
+	})
 }
