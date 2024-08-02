@@ -137,8 +137,8 @@ func New(server ...string) *Client {
 	return c
 }
 
-// NewWithReconnect returns the same thing as New(server ...string), but takes a context to initiate a bakground reconnect
-func NewWithReconnect(ctx context.Context, server ...string) *Client {
+// NewWithBackgroundReconnect returns the same thing as New(server ...string), but takes a context to initiate a bakground reconnect cron
+func NewWithBackgroundReconnect(ctx context.Context, server ...string) *Client {
 	c := New(server...)
 
 	// periodically ping the provided servers -- if there are timeouts, it will trigger a reconnect attempt
@@ -149,7 +149,7 @@ func NewWithReconnect(ctx context.Context, server ...string) *Client {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				c.Ping()
+				_ = c.Ping()
 			}
 		}
 	}()
