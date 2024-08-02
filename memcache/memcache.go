@@ -218,7 +218,7 @@ type Client struct {
 	freeconn map[string][]*conn
 
 	serverList    []string
-	reconnectOnce *sync.Once
+	reconnectLock sync.Mutex
 }
 
 // Item is an item to be got or stored in a memcached server.
@@ -946,14 +946,12 @@ func (c *Client) incrDecr(verb, key string, delta uint64) (uint64, error) {
 
 // backgroundReconnect makes an asyncronous attempt to reconnect to the provided server list
 func (c *Client) backgroundReconnect() {
-	// avoid a backup waiting for the lock
-	go c.reconnectOnce.Do(func() {
-		defer func() {
-			c.reconnectOnce = new(sync.Once)
-		}()
+	go func() {
+		c.reconnectLock.Lock()
+		defer c.reconnectLock.Unlock()
 
 		if sl, ok := c.selector.(*ServerList); ok {
 			_ = sl.SetServers(c.serverList...)
 		}
-	})
+	}()
 }
