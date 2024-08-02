@@ -218,7 +218,7 @@ type Client struct {
 	freeconn map[string][]*conn
 
 	serverList    []string
-	reconnectOnce sync.Once
+	reconnectOnce *sync.Once
 }
 
 // Item is an item to be got or stored in a memcached server.
@@ -949,7 +949,7 @@ func (c *Client) backgroundReconnect() {
 	// avoid a backup waiting for the lock
 	go c.reconnectOnce.Do(func() {
 		defer func() {
-			c.reconnectOnce = sync.Once{}
+			c.reconnectOnce = new(sync.Once)
 		}()
 
 		if sl, ok := c.selector.(*ServerList); ok {
