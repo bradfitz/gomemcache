@@ -141,7 +141,7 @@ func New(server ...string) *Client {
 func NewWithReconnect(ctx context.Context, server ...string) *Client {
 	c := New(server...)
 
-	// periodically reestablish connection to the provided servers
+	// periodically ping the provided servers -- if there are timeouts, it will trigger a reconnect attempt
 	go func() {
 		ticker := time.NewTicker(10 * time.Minute)
 		for {
@@ -149,7 +149,7 @@ func NewWithReconnect(ctx context.Context, server ...string) *Client {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				c.backgroundReconnect()
+				c.Ping()
 			}
 		}
 	}()
@@ -951,14 +951,25 @@ func (c *Client) incrDecr(verb, key string, delta uint64) (uint64, error) {
 	return val, err
 }
 
-// backgroundReconnect makes an asyncronous attempt to reconnect to the provided server list
+// backgroundReconnect makes an asyncronous attempt to reconnect to the provided server list and reset all open connections
 func (c *Client) backgroundReconnect() {
 	go func() {
 		c.reconnectLock.Lock()
 		defer c.reconnectLock.Unlock()
 
 		if sl, ok := c.selector.(*ServerList); ok {
-			_ = sl.SetServers(c.serverList...)
+			if err := sl.SetServers(c.serverList...); err == nil {
+				c.lk.Lock()
+				defer c.lk.Unlock()
+
+				// close all open connections before deleting them
+				for _, cs := range c.freeconn {
+					for _, conn := range cs {
+						conn.nc.Close()
+					}
+				}
+				c.freeconn = make(map[string][]*conn)
+			}
 		}
 	}()
 }
