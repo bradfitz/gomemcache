@@ -80,6 +80,10 @@ const (
 	// idle connection to consider it "recently used". The default value has been
 	// set equal to the default TCP TIME_WAIT timeout in linux.
 	defaultRecentlyUsedConnsThreshold = 2 * time.Minute
+
+	// defaultReconnectCronTimeout is how often the client will attempt to reestablish
+	// connection to the server when initialized with NewWithBackgroundReconnect
+	defaultReconnectCronTimeout = 10 * time.Minute
 )
 
 const buffered = 8 // arbitrary buffered channel size, for readability
@@ -137,16 +141,21 @@ func New(server ...string) *Client {
 	return c
 }
 
-// NewWithBackgroundReconnect returns the same thing as New(server ...string), but takes a context to initiate a bakground reconnect cron
-func NewWithBackgroundReconnect(ctx context.Context, server ...string) *Client {
+// NewWithBackgroundReconnect returns the same thing as New(server ...string), but takes a context and timeout to initiate a bakground reconnect cron
+func NewWithBackgroundReconnect(ctx context.Context, interval time.Duration, server ...string) *Client {
 	c := New(server...)
+
+	if interval == 0 {
+		interval = defaultReconnectCronTimeout
+	}
+	ticker := time.NewTicker(interval)
 
 	// periodically ping the provided servers -- if there are timeouts, it will trigger a reconnect attempt
 	go func() {
-		ticker := time.NewTicker(10 * time.Minute)
 		for {
 			select {
 			case <-ctx.Done():
+				ticker.Stop()
 				return
 			case <-ticker.C:
 				_ = c.Ping()
