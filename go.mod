@@ -1,3 +1,3 @@
-module github.com/bradfitz/gomemcache
+module github.com/kubedb/gomemcache
 
-go 1.18
+go 1.22.1

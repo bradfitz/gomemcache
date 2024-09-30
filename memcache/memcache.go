@@ -61,6 +61,9 @@ var (
 
 	// ErrNoServers is returned when no servers are configured or available.
 	ErrNoServers = errors.New("memcache: no servers configured or available")
+
+	// ErrNotAuthenticated is returned when Client Authentication failed due to any reason.
+	ErrNotAuthenticated = errors.New("memcache: Client Authentication Failed")
 )
 
 const (
@@ -99,20 +102,26 @@ func legalKey(key string) bool {
 }
 
 var (
-	crlf            = []byte("\r\n")
-	space           = []byte(" ")
-	resultOK        = []byte("OK\r\n")
-	resultStored    = []byte("STORED\r\n")
-	resultNotStored = []byte("NOT_STORED\r\n")
-	resultExists    = []byte("EXISTS\r\n")
-	resultNotFound  = []byte("NOT_FOUND\r\n")
-	resultDeleted   = []byte("DELETED\r\n")
-	resultEnd       = []byte("END\r\n")
-	resultOk        = []byte("OK\r\n")
-	resultTouched   = []byte("TOUCHED\r\n")
-
+	crlf                    = []byte("\r\n")
+	space                   = []byte(" ")
+	resultOK                = []byte("OK\r\n")
+	resultStored            = []byte("STORED\r\n")
+	resultNotStored         = []byte("NOT_STORED\r\n")
+	resultExists            = []byte("EXISTS\r\n")
+	resultNotFound          = []byte("NOT_FOUND\r\n")
+	resultDeleted           = []byte("DELETED\r\n")
+	resultEnd               = []byte("END\r\n")
+	resultOk                = []byte("OK\r\n")
+	resultTouched           = []byte("TOUCHED\r\n")
 	resultClientErrorPrefix = []byte("CLIENT_ERROR ")
 	versionPrefix           = []byte("VERSION")
+
+	// Authentication Related Error
+	resultUnauthenticatedError         = []byte("CLIENT_ERROR unauthenticated\r\n")
+	resultAuthenticationFailure        = []byte("CLIENT_ERROR authentication failure\r\n")
+	resultBadCommandFormat             = []byte("CLIENT_ERROR bad command line format\r\n")
+	resultBadCommandFormatTermination  = []byte("CLIENT_ERROR bad command line format termination\r\n")
+	resultBadAuthenticationTokenFormat = []byte("CLIENT_ERROR bad authentication token format\r\n")
 )
 
 // New returns a memcache client using the provided server(s)
@@ -180,6 +189,12 @@ type Item struct {
 	// It's populated by get requests and then the same value is
 	// required for a CompareAndSwap request to succeed.
 	CasID uint64
+
+	// Username for Authentication
+	User string
+
+	// Password for Authentication
+	Pass string
 }
 
 // conn is a connection to a server.
@@ -319,7 +334,7 @@ func (c *Client) onItem(item *Item, fn func(*Client, *bufio.ReadWriter, *Item) e
 		return err
 	}
 	defer cn.condRelease(&err)
-	if err = fn(c, cn.rw, item); err != nil {
+	if err := fn(c, cn.rw, item); err != nil {
 		return err
 	}
 	return nil
@@ -627,6 +642,7 @@ func (c *Client) populateOne(rw *bufio.ReadWriter, verb string, item *Item) erro
 		_, err = fmt.Fprintf(rw, "%s %s %d %d %d %d\r\n",
 			verb, item.Key, item.Flags, item.Expiration, len(item.Value), item.CasID)
 	} else {
+
 		_, err = fmt.Fprintf(rw, "%s %s %d %d %d\r\n",
 			verb, item.Key, item.Flags, item.Expiration, len(item.Value))
 	}
@@ -646,6 +662,7 @@ func (c *Client) populateOne(rw *bufio.ReadWriter, verb string, item *Item) erro
 	if err != nil {
 		return err
 	}
+
 	switch {
 	case bytes.Equal(line, resultStored):
 		return nil
@@ -773,4 +790,49 @@ func (c *Client) Close() error {
 	}
 	c.freeconn = nil
 	return ret
+}
+
+// Memcached Authentication
+
+func (c *Client) SetAuth(item *Item) error {
+	return c.onItem(item, (*Client).setAuth)
+}
+
+func (c *Client) setAuth(rw *bufio.ReadWriter, item *Item) error {
+	return c.authFunc(rw, "set", item)
+}
+
+func (c *Client) authFunc(rw *bufio.ReadWriter, verb string, item *Item) error {
+	if !legalKey(item.Key) {
+		return ErrMalformedKey
+	}
+	var err error
+	_, err = fmt.Fprintf(rw, "%s %s %d %d %d\r\n%s %s\r\n",
+		verb, item.Key, item.Flags, item.Expiration, len(item.User)+len(item.Pass)+1, item.User, item.Pass)
+	if err != nil {
+		return err
+	}
+	if err := rw.Flush(); err != nil {
+		return err
+	}
+	line, err := rw.ReadSlice('\n')
+
+	if err != nil {
+		return err
+	}
+	switch {
+	case bytes.Equal(line, resultStored):
+		return nil
+	case bytes.Equal(line, resultUnauthenticatedError):
+		return ErrNotAuthenticated
+	case bytes.Equal(line, resultAuthenticationFailure):
+		return ErrNotAuthenticated
+	case bytes.Equal(line, resultBadCommandFormat):
+		return ErrNotAuthenticated
+	case bytes.Equal(line, resultBadCommandFormatTermination):
+		return ErrNotAuthenticated
+	case bytes.Equal(line, resultBadAuthenticationTokenFormat):
+		return ErrNotAuthenticated
+	}
+	return fmt.Errorf("memcache: unexpected response line from %q: %q", verb, string(line))
 }
