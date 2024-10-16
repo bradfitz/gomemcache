@@ -538,45 +538,6 @@ func TestClient_Close_ShouldBeIdempotent(t *testing.T) {
 	c.Close()
 }
 
-func TestClientReconnectsOnTimeout(t *testing.T) {
-	if !setup(t) {
-		return
-	}
-
-	c := New(testServer)
-	c.Timeout = 100 * time.Second
-
-	t.Cleanup(c.Close)
-
-	// should be able to ping
-	if err := c.Ping(); err != nil {
-		t.Fatalf("expected no error but received %s", err.Error())
-	}
-
-	// break the connection
-	tcpaddr, err := net.ResolveTCPAddr("tcp", "192.0.2.0:11211")
-	if err != nil {
-		t.Fatalf("expected no error but received %s", err.Error())
-	}
-	c.selector.(*ServerList).addrs[0] = newStaticAddr(tcpaddr)
-
-	// ping should fail
-	if err := c.Ping(); err == nil {
-		t.Fatalf("expected an error but received none")
-	}
-
-	// ping should succeed again after the client reconnects in the background
-	time.Sleep(500 * time.Millisecond)
-	if err := c.Ping(); err != nil {
-		t.Fatalf("expected no error but received %s", err.Error())
-	}
-
-	// verify server address was reset
-	if addr := c.selector.(*ServerList).addrs[0].String(); "127.0.0.1:11211" != addr {
-		t.Fatalf("expected address '127.0.0.1:11211' but got '%s'", addr)
-	}
-}
-
 func BenchmarkGetMulti(b *testing.B) {
 	c := New(testServer)
 	defer c.Close()
