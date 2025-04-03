@@ -155,7 +155,7 @@ type Client struct {
 
 	selector ServerSelector
 
-	lk       sync.Mutex
+	mu       sync.Mutex
 	freeconn map[string][]*conn
 }
 
@@ -213,8 +213,8 @@ func (cn *conn) condRelease(err *error) {
 }
 
 func (c *Client) putFreeConn(addr net.Addr, cn *conn) {
-	c.lk.Lock()
-	defer c.lk.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.freeconn == nil {
 		c.freeconn = make(map[string][]*conn)
 	}
@@ -227,8 +227,8 @@ func (c *Client) putFreeConn(addr net.Addr, cn *conn) {
 }
 
 func (c *Client) getFreeConn(addr net.Addr) (cn *conn, ok bool) {
-	c.lk.Lock()
-	defer c.lk.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.freeconn == nil {
 		return nil, false
 	}
@@ -476,11 +476,11 @@ func (c *Client) touchFromAddr(addr net.Addr, keys []string, expiration int32) e
 // cache misses. Each key must be at most 250 bytes in length.
 // If no error is returned, the returned map will also be non-nil.
 func (c *Client) GetMulti(keys []string) (map[string]*Item, error) {
-	var lk sync.Mutex
+	var mu sync.Mutex
 	m := make(map[string]*Item)
 	addItemToMap := func(it *Item) {
-		lk.Lock()
-		defer lk.Unlock()
+		mu.Lock()
+		defer mu.Unlock()
 		m[it.Key] = it
 	}
 
@@ -834,8 +834,8 @@ func (c *Client) incrDecr(verb, key string, delta uint64) (uint64, error) {
 //
 // After Close, the Client may still be used.
 func (c *Client) Close() error {
-	c.lk.Lock()
-	defer c.lk.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	var ret error
 	for _, conns := range c.freeconn {
 		for _, c := range conns {
