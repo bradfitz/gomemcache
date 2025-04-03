@@ -363,30 +363,31 @@ func (c *Client) withKeyAddr(key string, fn func(net.Addr) error) (err error) {
 	return fn(addr)
 }
 
-func (c *Client) withAddrRw(addr net.Addr, fn func(*bufio.ReadWriter) error) (err error) {
+func (c *Client) withAddrRw(addr net.Addr, fn func(*conn) error) (err error) {
 	cn, err := c.getConn(addr)
 	if err != nil {
 		return err
 	}
 	defer cn.condRelease(&err)
-	return fn(cn.rw)
+	return fn(cn)
 }
 
-func (c *Client) withKeyRw(key string, fn func(*bufio.ReadWriter) error) error {
+func (c *Client) withKeyRw(key string, fn func(*conn) error) error {
 	return c.withKeyAddr(key, func(addr net.Addr) error {
 		return c.withAddrRw(addr, fn)
 	})
 }
 
 func (c *Client) getFromAddr(addr net.Addr, keys []string, cb func(*Item)) error {
-	return c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
+	return c.withAddrRw(addr, func(conn *conn) error {
+		rw := conn.rw
 		if _, err := fmt.Fprintf(rw, "gets %s\r\n", strings.Join(keys, " ")); err != nil {
 			return err
 		}
 		if err := rw.Flush(); err != nil {
 			return err
 		}
-		if err := parseGetResponse(rw.Reader, cb); err != nil {
+		if err := parseGetResponse(rw.Reader, conn, cb); err != nil {
 			return err
 		}
 		return nil
@@ -395,7 +396,8 @@ func (c *Client) getFromAddr(addr net.Addr, keys []string, cb func(*Item)) error
 
 // flushAllFromAddr send the flush_all command to the given addr
 func (c *Client) flushAllFromAddr(addr net.Addr) error {
-	return c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
+	return c.withAddrRw(addr, func(conn *conn) error {
+		rw := conn.rw
 		if _, err := fmt.Fprintf(rw, "flush_all\r\n"); err != nil {
 			return err
 		}
@@ -418,7 +420,8 @@ func (c *Client) flushAllFromAddr(addr net.Addr) error {
 
 // ping sends the version command to the given addr
 func (c *Client) ping(addr net.Addr) error {
-	return c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
+	return c.withAddrRw(addr, func(conn *conn) error {
+		rw := conn.rw
 		if _, err := fmt.Fprintf(rw, "version\r\n"); err != nil {
 			return err
 		}
@@ -441,7 +444,8 @@ func (c *Client) ping(addr net.Addr) error {
 }
 
 func (c *Client) touchFromAddr(addr net.Addr, keys []string, expiration int32) error {
-	return c.withAddrRw(addr, func(rw *bufio.ReadWriter) error {
+	return c.withAddrRw(addr, func(conn *conn) error {
+		rw := conn.rw
 		for _, key := range keys {
 			if _, err := fmt.Fprintf(rw, "touch %s %d\r\n", key, expiration); err != nil {
 				return err
@@ -509,8 +513,12 @@ func (c *Client) GetMulti(keys []string) (map[string]*Item, error) {
 
 // parseGetResponse reads a GET response from r and calls cb for each
 // read and allocated Item
-func parseGetResponse(r *bufio.Reader, cb func(*Item)) error {
+func parseGetResponse(r *bufio.Reader, conn *conn, cb func(*Item)) error {
 	for {
+		// extend deadline before each additional call, otherwise all cumulative
+		// calls use the same overall deadline
+		conn.extendDeadline()
+
 		line, err := r.ReadSlice('\n')
 		if err != nil {
 			return err
@@ -694,15 +702,15 @@ func writeExpectf(rw *bufio.ReadWriter, expect []byte, format string, args ...in
 // Delete deletes the item with the provided key. The error ErrCacheMiss is
 // returned if the item didn't already exist in the cache.
 func (c *Client) Delete(key string) error {
-	return c.withKeyRw(key, func(rw *bufio.ReadWriter) error {
-		return writeExpectf(rw, resultDeleted, "delete %s\r\n", key)
+	return c.withKeyRw(key, func(conn *conn) error {
+		return writeExpectf(conn.rw, resultDeleted, "delete %s\r\n", key)
 	})
 }
 
 // DeleteAll deletes all items in the cache.
 func (c *Client) DeleteAll() error {
-	return c.withKeyRw("", func(rw *bufio.ReadWriter) error {
-		return writeExpectf(rw, resultDeleted, "flush_all\r\n")
+	return c.withKeyRw("", func(conn *conn) error {
+		return writeExpectf(conn.rw, resultDeleted, "flush_all\r\n")
 	})
 }
 
@@ -733,7 +741,8 @@ func (c *Client) Decrement(key string, delta uint64) (newValue uint64, err error
 
 func (c *Client) incrDecr(verb, key string, delta uint64) (uint64, error) {
 	var val uint64
-	err := c.withKeyRw(key, func(rw *bufio.ReadWriter) error {
+	err := c.withKeyRw(key, func(conn *conn) error {
+		rw := conn.rw
 		line, err := writeReadLine(rw, "%s %s %d\r\n", verb, key, delta)
 		if err != nil {
 			return err
