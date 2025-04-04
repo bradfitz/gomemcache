@@ -151,9 +151,8 @@ func (c *testConn) handleRequestLine(line string) bool {
 		if noReply == "" {
 			if ok {
 				return c.reply("TOUCHED")
-			} else {
-				return c.reply("NOT_FOUND")
 			}
+			return c.reply("NOT_FOUND")
 		}
 		return true
 	}
@@ -163,7 +162,7 @@ func (c *testConn) handleRequestLine(line string) bool {
 		flags, _ := strconv.ParseUint(flagsStr, 10, 32)
 		exptimeVal, _ := strconv.ParseInt(exptimeStr, 10, 64)
 		itemLen, _ := strconv.ParseInt(lenStr, 10, 32)
-		//log.Printf("got %q flags=%q exp=%d %d len=%d cas=%q noreply=%q", verb, key, flags, exptimeVal, itemLen, casUniq, noReply)
+		// log.Printf("got %q flags=%q exp=%d %d len=%d cas=%q noreply=%q", verb, key, flags, exptimeVal, itemLen, casUniq, noReply)
 		if c.s.m == nil {
 			c.s.m = make(map[string]serverItem)
 		}
@@ -274,7 +273,6 @@ func (c *testConn) handleRequestLine(line string) bool {
 	}
 
 	return false
-
 }
 
 func computeExpTime(n int64) time.Time {
