@@ -168,6 +168,14 @@ func mustSetF(t *testing.T, c *Client) func(*Item) {
 	}
 }
 
+func TestStats(t *testing.T) {
+	client := New(testServer)
+	_, err := client.Stats()
+	if err != nil {
+		t.Errorf("error fetching stats %v", err)
+	}
+}
+
 func testWithClient(t *testing.T, c *Client) {
 	checkErr := func(err error, format string, args ...interface{}) {
 		t.Helper()
