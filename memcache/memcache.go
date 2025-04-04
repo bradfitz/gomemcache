@@ -419,6 +419,7 @@ func (c *Client) flushAllFromAddr(addr net.Addr) error {
 	})
 }
 
+// version sends the version command to the given addr. returns the version string
 func (c *Client) version(addr net.Addr) (string, error) {
 	var version string
 	err := c.withAddrRw(addr, func(conn *conn) error {
@@ -789,17 +790,33 @@ func (c *Client) Ping() error {
 	return c.selector.Each(c.ping)
 }
 
-func (c *Client) Version() (map[string]string, error) {
+// VersionAll returns map of the version strings of all instances, keyed by
+// their address string. If any instance is down, its version string is
+// returned as an empty string.
+func (c *Client) VersionAll() (map[string]string, error) {
 	versionMap := make(map[string]string)
 	err := c.selector.Each(func(addr net.Addr) error {
 		version, err := c.version(addr)
 		if err != nil {
-			return err
+			version = ""
 		}
 		versionMap[addr.String()] = version
 		return nil
 	})
 	return versionMap, err
+}
+
+// Version returns the version string of the instance at the given key.
+func (c *Client) Version(key string) (string, error) {
+	addr, err := c.selector.PickServer(key)
+	if err != nil {
+		return "", err
+	}
+	version, err := c.version(addr)
+	if err != nil {
+		return "", err
+	}
+	return version, nil
 }
 
 // Increment atomically increments key by delta. The return value is
