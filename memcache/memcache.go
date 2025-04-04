@@ -754,7 +754,7 @@ func (c *Client) DeleteAll() error {
 // returned if the item didn't already exist in the cache.
 func (c *Client) GetAndTouch(key string, expiration int32) (item *Item, err error) {
 	err = c.withKeyAddr(key, func(addr net.Addr) error {
-		return c.getAndTouchFromAddr(addr, key, expiration, func(it *Item) { item = it })
+		return c.getAndTouchFromAddr(addr, key, expiration, func(it *Item) { item = it }, "gat")
 	})
 	if err == nil && item == nil {
 		err = ErrCacheMiss
@@ -762,10 +762,27 @@ func (c *Client) GetAndTouch(key string, expiration int32) (item *Item, err erro
 	return
 }
 
-func (c *Client) getAndTouchFromAddr(addr net.Addr, key string, expiration int32, cb func(*Item)) error {
+// GetAndTouchWithCAS retrieves an item from the cache and updates its expiration time.
+// This function is similar to GetAndTouch but uses the "gats" command to perform
+// a CAS operation. The CAS operation ensures that the item
+// has not been modified or evicted between the retrieval and the update of the
+// expiration time. If the item is not found, ErrCacheMiss is returned.
+func (c *Client) GetAndTouchWithCAS(key string, expiration int32) (item *Item, err error) {
+	err = c.withKeyAddr(key, func(addr net.Addr) error {
+		return c.getAndTouchFromAddr(addr, key, expiration, func(it *Item) { item = it }, "gats")
+	})
+	if err == nil && item == nil {
+		err = ErrCacheMiss
+	}
+	return
+}
+
+// getAndTouchFromAddr sends a "gat" or "gats" command to the specified address.
+// The `command` parameter determines whether to use "gat" (Get And Touch) or "gats" (Get And Touch with CAS).
+func (c *Client) getAndTouchFromAddr(addr net.Addr, key string, expiration int32, cb func(*Item), command string) error {
 	return c.withAddrRw(addr, func(conn *conn) error {
 		rw := conn.rw
-		if _, err := fmt.Fprintf(rw, "gat %d %s\r\n", expiration, key); err != nil {
+		if _, err := fmt.Fprintf(rw, "%s %d %s\r\n", command, expiration, key); err != nil {
 			return err
 		}
 		if err := rw.Flush(); err != nil {
