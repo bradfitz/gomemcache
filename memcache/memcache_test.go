@@ -103,10 +103,10 @@ func TestTLS(t *testing.T) {
 	}
 	t.Logf("version: %s", bytes.TrimSpace(out))
 
-	if err := os.WriteFile(filepath.Join(td, "/cert.pem"), LocalhostCert, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(td, "/cert.pem"), LocalhostCert, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(td, "/key.pem"), LocalhostKey, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(td, "/key.pem"), LocalhostKey, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -155,7 +155,6 @@ func TestTLS(t *testing.T) {
 			InsecureSkipVerify: true,
 		}
 		return td.DialContext(ctx, network, addr)
-
 	}
 	testWithClient(t, c)
 }
@@ -248,16 +247,16 @@ func testWithClient(t *testing.T, c *Client) {
 	}
 
 	// Append
-	append := &Item{Key: "append", Value: []byte("appendval")}
-	if err := c.Append(append); err != ErrNotStored {
+	appendItem := &Item{Key: "append", Value: []byte("appendval")}
+	if err := c.Append(appendItem); err != ErrNotStored {
 		t.Fatalf("first append(append) want ErrNotStored, got %v", err)
 	}
-	c.Set(append)
+	c.Set(appendItem)
 	err = c.Append(&Item{Key: "append", Value: []byte("1")})
 	checkErr(err, "second append(append): %v", err)
 	appended, err := c.Get("append")
 	checkErr(err, "third append(append): %v", err)
-	if string(appended.Value) != string(append.Value)+"1" {
+	if string(appended.Value) != string(appendItem.Value)+"1" {
 		t.Fatalf("Append: want=append1, got=%s", string(appended.Value))
 	}
 
@@ -305,7 +304,7 @@ func testWithClient(t *testing.T, c *Client) {
 	// Delete
 	err = c.Delete("foo")
 	checkErr(err, "Delete: %v", err)
-	it, err = c.Get("foo")
+	_, err = c.Get("foo")
 	if err != ErrCacheMiss {
 		t.Errorf("post-Delete want ErrCacheMiss, got %v", err)
 	}
@@ -324,12 +323,12 @@ func testWithClient(t *testing.T, c *Client) {
 	}
 	err = c.Delete("num")
 	checkErr(err, "delete num: %v", err)
-	n, err = c.Increment("num", 1)
+	_, err = c.Increment("num", 1)
 	if err != ErrCacheMiss {
 		t.Fatalf("increment post-delete: want ErrCacheMiss, got %v", err)
 	}
 	mustSet(&Item{Key: "num", Value: []byte("not-numeric")})
-	n, err = c.Increment("num", 1)
+	_, err = c.Increment("num", 1)
 	if err == nil || !strings.Contains(err.Error(), "client error") {
 		t.Fatalf("increment non-number: want client error, got %v", err)
 	}
@@ -338,7 +337,7 @@ func testWithClient(t *testing.T, c *Client) {
 	// Test Delete All
 	err = c.DeleteAll()
 	checkErr(err, "DeleteAll: %v", err)
-	it, err = c.Get("bar")
+	_, err = c.Get("bar")
 	if err != ErrCacheMiss {
 		t.Errorf("post-DeleteAll want ErrCacheMiss, got %v", err)
 	}
@@ -387,7 +386,7 @@ func testTouchWithClient(t *testing.T, c *Client) {
 
 	_, err = c.Get("bar")
 	if err == nil {
-		t.Fatalf("item bar did not expire within %v seconds", time.Now().Sub(setTime).Seconds())
+		t.Fatalf("item bar did not expire within %v seconds", time.Since(setTime).Seconds())
 	} else {
 		if err != ErrCacheMiss {
 			t.Fatalf("unexpected error retrieving bar: %v", err.Error())
@@ -446,32 +445,58 @@ func TestScanGetResponseLine(t *testing.T) {
 		wantSize  int
 		wantErr   bool
 	}{
-		{name: "blank", line: "",
-			wantErr: true},
-		{name: "malformed1", line: "VALU foobar1234 1 4096\r\n",
-			wantErr: true},
-		{name: "malformed2", line: "VALUEfoobar1234 1 4096\r\n",
-			wantErr: true},
-		{name: "malformed3", line: "VALUE foobar1234 14096\r\n",
-			wantErr: true},
-		{name: "malformed4", line: "VALUE foobar123414096\r\n",
-			wantErr: true},
-		{name: "no-eol", line: "VALUE foobar1234 1 4096",
-			wantErr: true},
-		{name: "basic", line: "VALUE foobar1234 1 4096\r\n",
-			wantKey: "foobar1234", wantFlags: 1, wantSize: 4096},
-		{name: "casid", line: "VALUE foobar1234 1 4096 1234\r\n",
-			wantKey: "foobar1234", wantFlags: 1, wantSize: 4096, wantCasid: 1234},
-		{name: "flags-max-uint32", line: "VALUE key 4294967295 1\r\n",
-			wantKey: "key", wantFlags: 4294967295, wantSize: 1},
-		{name: "flags-overflow", line: "VALUE key 4294967296 1\r\n",
-			wantErr: true},
-		{name: "size-max-uint32", line: "VALUE key 1 2147483647\r\n",
-			wantKey: "key", wantFlags: 1, wantSize: 2147483647},
-		{name: "size-overflow", line: "VALUE key 1 4294967296\r\n",
-			wantErr: true},
-		{name: "casid-overflow", line: "VALUE key 1 4096 18446744073709551616\r\n",
-			wantErr: true},
+		{
+			name: "blank", line: "",
+			wantErr: true,
+		},
+		{
+			name: "malformed1", line: "VALU foobar1234 1 4096\r\n",
+			wantErr: true,
+		},
+		{
+			name: "malformed2", line: "VALUEfoobar1234 1 4096\r\n",
+			wantErr: true,
+		},
+		{
+			name: "malformed3", line: "VALUE foobar1234 14096\r\n",
+			wantErr: true,
+		},
+		{
+			name: "malformed4", line: "VALUE foobar123414096\r\n",
+			wantErr: true,
+		},
+		{
+			name: "no-eol", line: "VALUE foobar1234 1 4096",
+			wantErr: true,
+		},
+		{
+			name: "basic", line: "VALUE foobar1234 1 4096\r\n",
+			wantKey: "foobar1234", wantFlags: 1, wantSize: 4096,
+		},
+		{
+			name: "casid", line: "VALUE foobar1234 1 4096 1234\r\n",
+			wantKey: "foobar1234", wantFlags: 1, wantSize: 4096, wantCasid: 1234,
+		},
+		{
+			name: "flags-max-uint32", line: "VALUE key 4294967295 1\r\n",
+			wantKey: "key", wantFlags: 4294967295, wantSize: 1,
+		},
+		{
+			name: "flags-overflow", line: "VALUE key 4294967296 1\r\n",
+			wantErr: true,
+		},
+		{
+			name: "size-max-uint32", line: "VALUE key 1 2147483647\r\n",
+			wantKey: "key", wantFlags: 1, wantSize: 2147483647,
+		},
+		{
+			name: "size-overflow", line: "VALUE key 1 4294967296\r\n",
+			wantErr: true,
+		},
+		{
+			name: "casid-overflow", line: "VALUE key 1 4096 18446744073709551616\r\n",
+			wantErr: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
