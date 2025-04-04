@@ -124,6 +124,13 @@ var (
 	resultBadCommandFormat             = []byte("CLIENT_ERROR bad command line format\r\n")
 	resultBadCommandFormatTermination  = []byte("CLIENT_ERROR bad command line format termination\r\n")
 	resultBadAuthenticationTokenFormat = []byte("CLIENT_ERROR bad authentication token format\r\n")
+
+	// Authentication Error Stuffs
+	resultUnauthenticatedError         = []byte("CLIENT_ERROR unauthenticated\r\n")
+	resultAuthenticationFailure        = []byte("CLIENT_ERROR authentication failure\r\n")
+	resultBadCommandFormat             = []byte("CLIENT_ERROR bad command line format\r\n")
+	resultBadCommandFormatTermination  = []byte("CLIENT_ERROR bad command line format termination\r\n")
+	resultBadAuthenticationTokenFormat = []byte("CLIENT_ERROR bad authentication token format\r\n")
 )
 
 // New returns a memcache client using the provided server(s)
@@ -866,6 +873,50 @@ func (c *Client) Close() error {
 
 // Memcached Authentication Support
 
+func (c *Client) SetAuth(item *Item) error {
+	return c.onItem(item, (*Client).setAuth)
+}
+
+func (c *Client) setAuth(rw *bufio.ReadWriter, item *Item) error {
+	return c.authFunc(rw, "set", item)
+}
+
+func (c *Client) authFunc(rw *bufio.ReadWriter, verb string, item *Item) error {
+	if !legalKey(item.Key) {
+		return ErrMalformedKey
+	}
+	var err error
+	_, err = fmt.Fprintf(rw, "%s %s %d %d %d\r\n%s %s\r\n",
+		verb, item.Key, item.Flags, item.Expiration, len(item.User)+len(item.Pass)+1, item.User, item.Pass)
+	if err != nil {
+		return err
+	}
+	if err := rw.Flush(); err != nil {
+		return err
+	}
+	line, err := rw.ReadSlice('\n')
+
+	if err != nil {
+		return err
+	}
+	switch {
+	case bytes.Equal(line, resultStored):
+		return nil
+	case bytes.Equal(line, resultUnauthenticatedError):
+		return ErrNotAuthenticated
+	case bytes.Equal(line, resultAuthenticationFailure):
+		return ErrNotAuthenticated
+	case bytes.Equal(line, resultBadCommandFormat):
+		return ErrNotAuthenticated
+	case bytes.Equal(line, resultBadCommandFormatTermination):
+		return ErrNotAuthenticated
+	case bytes.Equal(line, resultBadAuthenticationTokenFormat):
+		return ErrNotAuthenticated
+	}
+	return fmt.Errorf("memcache: unexpected response line from %q: %q", verb, string(line))
+}
+
+// Memcached Authentication Support
 func (c *Client) SetAuth(item *Item) error {
 	return c.onItem(item, (*Client).setAuth)
 }
