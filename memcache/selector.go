@@ -111,6 +111,7 @@ var keyBufPool = sync.Pool{
 	},
 }
 
+// PickServer returns the address for a server from the ServerList.
 func (ss *ServerList) PickServer(key string) (net.Addr, error) {
 	ss.mu.RLock()
 	defer ss.mu.RUnlock()

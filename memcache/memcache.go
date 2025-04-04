@@ -49,7 +49,7 @@ var (
 	// CompareAndSwap) failed because the condition was not satisfied.
 	ErrNotStored = errors.New("memcache: item not stored")
 
-	// ErrServer means that a server error occurred.
+	// ErrServerError means that a server error occurred.
 	ErrServerError = errors.New("memcache: server error")
 
 	// ErrNoStats means that no statistics were available.
@@ -57,7 +57,6 @@ var (
 
 	// ErrMalformedKey is returned when an invalid key is used.
 	// Keys must be at maximum 250 bytes long and not
-	// contain whitespace or control characters.
 	ErrMalformedKey = errors.New("malformed: key is too long or contains invalid characters")
 
 	// ErrNoServers is returned when no servers are configured or available.
@@ -101,7 +100,6 @@ func legalKey(key string) bool {
 
 var (
 	crlf            = []byte("\r\n")
-	space           = []byte(" ")
 	resultOK        = []byte("OK\r\n")
 	resultStored    = []byte("STORED\r\n")
 	resultNotStored = []byte("NOT_STORED\r\n")
@@ -326,6 +324,7 @@ func (c *Client) onItem(item *Item, fn func(*Client, *bufio.ReadWriter, *Item) e
 	return nil
 }
 
+// FlushAll send the flush_all command.
 func (c *Client) FlushAll() error {
 	return c.selector.Each(c.flushAllFromAddr)
 }
@@ -460,7 +459,8 @@ func (c *Client) touchFromAddr(addr net.Addr, keys []string, expiration int32) e
 			}
 			switch {
 			case bytes.Equal(line, resultTouched):
-				break
+				// TODO: SA4011: ineffective break statement. Did you mean to break out of the outer loop?
+				break //nolint:staticcheck
 			case bytes.Equal(line, resultNotFound):
 				return ErrCacheMiss
 			default:
@@ -504,7 +504,7 @@ func (c *Client) GetMulti(keys []string) (map[string]*Item, error) {
 	}
 
 	var err error
-	for _ = range keyMap {
+	for range keyMap {
 		if ge := <-ch; ge != nil {
 			err = ge
 		}
@@ -750,7 +750,7 @@ func (c *Client) DeleteAll() error {
 	})
 }
 
-// Get and Touch the item with the provided key. The error ErrCacheMiss is
+// GetAndTouch Get and Touch the item with the provided key. The error ErrCacheMiss is
 // returned if the item didn't already exist in the cache.
 func (c *Client) GetAndTouch(key string, expiration int32) (item *Item, err error) {
 	err = c.withKeyAddr(key, func(addr net.Addr) error {
