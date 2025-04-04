@@ -129,3 +129,8 @@ func (ss *ServerList) PickServer(key string) (net.Addr, error) {
 
 	return ss.addrs[cs%uint32(len(ss.addrs))], nil
 }
+
+var (
+	_ ServerSelector = (*ServerList)(nil)
+	_ net.Addr       = (*staticAddr)(nil)
+)
