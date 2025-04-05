@@ -25,7 +25,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 	"os"
 	"os/exec"
@@ -404,7 +403,7 @@ func BenchmarkOnItem(b *testing.B) {
 	go func() {
 		for {
 			if c, err := fakeServer.Accept(); err == nil {
-				go func() { io.Copy(ioutil.Discard, c) }()
+				go func() { io.Copy(io.Discard, c) }()
 			} else {
 				return
 			}
