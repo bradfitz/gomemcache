@@ -1,5 +1,7 @@
 ## About
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/bradfitz/gomemcache.svg)](https://pkg.go.dev/github.com/bradfitz/gomemcache)
+
 This is a memcache client library for the Go programming language
 (http://golang.org/).
 
