@@ -19,6 +19,7 @@ package memcache
 import (
 	"hash/crc32"
 	"net"
+	"net/netip"
 	"strings"
 	"sync"
 )
@@ -42,15 +43,22 @@ type ServerList struct {
 }
 
 // staticAddr caches the Network() and String() values from any net.Addr.
+// For TCP addresses it also caches the netip.AddrPort, which the Client uses
+// as a fast, alloc-free map key for per-backend state.
 type staticAddr struct {
 	ntw, str string
+	ap       netip.AddrPort // zero (!IsValid) if ntw is not tcp-shaped
 }
 
 func newStaticAddr(a net.Addr) net.Addr {
-	return &staticAddr{
+	sa := &staticAddr{
 		ntw: a.Network(),
 		str: a.String(),
 	}
+	if tcp, ok := a.(*net.TCPAddr); ok {
+		sa.ap = tcp.AddrPort()
+	}
+	return sa
 }
 
 func (s *staticAddr) Network() string { return s.ntw }
@@ -89,7 +97,7 @@ func (ss *ServerList) SetServers(servers ...string) error {
 	return nil
 }
 
-// Each iterates over each server calling the given function
+// Each iterates over each server calling the given function.
 func (ss *ServerList) Each(f func(net.Addr) error) error {
 	ss.mu.RLock()
 	defer ss.mu.RUnlock()
