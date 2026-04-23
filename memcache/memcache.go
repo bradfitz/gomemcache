@@ -153,6 +153,9 @@ type Client struct {
 	// be set to a number higher than your peak parallel requests.
 	MaxIdleConns int
 
+	// DisableCAS makes the client use "get" instead of "gets", so CAS IDs won't be fetched.
+	DisableCAS bool
+
 	selector ServerSelector
 
 	mu       sync.Mutex
@@ -382,7 +385,11 @@ func (c *Client) withKeyRw(key string, fn func(*conn) error) error {
 func (c *Client) getFromAddr(addr net.Addr, keys []string, cb func(*Item)) error {
 	return c.withAddrRw(addr, func(conn *conn) error {
 		rw := conn.rw
-		if _, err := fmt.Fprintf(rw, "gets %s\r\n", strings.Join(keys, " ")); err != nil {
+		cmd := "gets"
+		if c.DisableCAS {
+			cmd = "get"
+		}
+		if _, err := fmt.Fprintf(rw, "%s %s\r\n", cmd, strings.Join(keys, " ")); err != nil {
 			return err
 		}
 		if err := rw.Flush(); err != nil {
