@@ -343,6 +343,33 @@ func testWithClient(t *testing.T, c *Client) {
 		t.Errorf("post-DeleteAll want ErrCacheMiss, got %v", err)
 	}
 
+	// Test Version
+	versions, err := c.VersionAll()
+	if err != nil {
+		t.Fatalf("VersionAll: %v", err)
+	}
+	if len(versions) != 1 {
+		t.Fatalf("VersionAll returned %d addresses, expected 1", len(versions))
+	}
+
+	expected_key := c.selector.(*ServerList).addrs[0].String()
+	_, ok := versions[expected_key]
+	if !ok {
+		var found_key string = ""
+		for k := range versions {
+			found_key = k
+		}
+		t.Fatalf("VersionAll key %q not found in %v. Found %q instead", expected_key, versions, found_key)
+	}
+
+	version, err := c.Version(expected_key)
+	if err != nil {
+		t.Fatalf("Version: %v", err)
+	}
+	if version != versions[expected_key] {
+		t.Fatalf("Version: expected %q, got %q", versions[expected_key], version)
+	}
+
 	// Test Ping
 	err = c.Ping()
 	checkErr(err, "error ping: %s", err)

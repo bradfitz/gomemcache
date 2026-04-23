@@ -90,6 +90,8 @@ func (ss *ServerList) SetServers(servers ...string) error {
 }
 
 // Each iterates over each server calling the given function
+// with the server address. If the function returns an error,
+// the iteration stops immediately and the error is returned.
 func (ss *ServerList) Each(f func(net.Addr) error) error {
 	ss.mu.RLock()
 	defer ss.mu.RUnlock()
@@ -127,3 +129,8 @@ func (ss *ServerList) PickServer(key string) (net.Addr, error) {
 
 	return ss.addrs[cs%uint32(len(ss.addrs))], nil
 }
+
+var (
+	_ ServerSelector = (*ServerList)(nil)
+	_ net.Addr       = (*staticAddr)(nil)
+)
