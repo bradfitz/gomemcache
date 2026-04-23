@@ -71,6 +71,8 @@ const (
 	// DefaultMaxIdleConns is the default maximum number of idle connections
 	// kept for any single address.
 	DefaultMaxIdleConns = 2
+	// maximum number of times to attempt to reconnect
+	maxRetries = 10
 )
 
 const buffered = 8 // arbitrary buffered channel size, for readability
@@ -370,7 +372,26 @@ func (c *Client) withAddrRw(addr net.Addr, fn func(*conn) error) (err error) {
 		return err
 	}
 	defer cn.condRelease(&err)
-	return fn(cn)
+
+	// Exponential backoff (based on Ethernet)
+	retries := 0
+	err = fn(cn)
+	if err == io.EOF { // Bad connection
+		cn.nc.Close()
+		for err != nil && retries < maxRetries {
+			retries++
+			backoffCoefficient := int(math.Pow(float64(2), float64(retries))) - 1
+			sleepFor := time.Nanosecond * time.Duration(50000*backoffCoefficient)
+			time.Sleep(sleepFor)
+			cn, err = c.getConn(addr)
+			if err != nil {
+				continue
+			}
+			err = fn(cn)
+		}
+	}
+
+	return
 }
 
 func (c *Client) withKeyRw(key string, fn func(*conn) error) error {
