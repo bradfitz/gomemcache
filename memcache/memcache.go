@@ -477,7 +477,7 @@ func (c *Client) touchFromAddr(addr net.Addr, keys []string, expiration int32) e
 // If no error is returned, the returned map will also be non-nil.
 func (c *Client) GetMulti(keys []string) (map[string]*Item, error) {
 	var mu sync.Mutex
-	m := make(map[string]*Item)
+	m := make(map[string]*Item, len(keys))
 	addItemToMap := func(it *Item) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -491,7 +491,7 @@ func (c *Client) GetMulti(keys []string) (map[string]*Item, error) {
 		}
 		addr, err := c.selector.PickServer(key)
 		if err != nil {
-			return nil, err
+			continue
 		}
 		keyMap[addr] = append(keyMap[addr], key)
 	}
