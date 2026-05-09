@@ -119,10 +119,13 @@ var (
 // New returns a memcache client using the provided server(s)
 // with equal weight. If a server is listed multiple times,
 // it gets a proportional amount of weight.
-func New(server ...string) *Client {
+// Error is returned if any of the server names fail to resolve.
+// No attempt is made to connect to the server. If any error
+// is returned, no changes are made to the ServerList.
+func New(server ...string) (*Client, error) {
 	ss := new(ServerList)
-	ss.SetServers(server...)
-	return NewFromSelector(ss)
+	err := ss.SetServers(server...)
+	return NewFromSelector(ss), err
 }
 
 // NewFromSelector returns a new Client using the provided ServerSelector.
