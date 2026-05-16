@@ -779,9 +779,21 @@ func (c *Client) getAndTouchFromAddr(addr net.Addr, key string, expiration int32
 }
 
 // Ping checks all instances if they are alive. Returns error if any
-// of them is down.
+// of them is down, or ErrNoServers if the client has no servers
+// configured.
 func (c *Client) Ping() error {
-	return c.selector.Each(c.ping)
+	pinged := false
+	err := c.selector.Each(func(addr net.Addr) error {
+		pinged = true
+		return c.ping(addr)
+	})
+	if err != nil {
+		return err
+	}
+	if !pinged {
+		return ErrNoServers
+	}
+	return nil
 }
 
 // Increment atomically increments key by delta. The return value is
