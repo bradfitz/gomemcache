@@ -502,3 +502,14 @@ func TestScanGetResponseLine(t *testing.T) {
 		})
 	}
 }
+
+// Regression for #179. A client built with zero servers used to report
+// Ping success because Each iterates over an empty list. Other
+// operations on the same client return ErrNoServers, so Ping should
+// surface the same signal.
+func TestPingNoServers(t *testing.T) {
+	c := New()
+	if err := c.Ping(); err != ErrNoServers {
+		t.Fatalf("Ping() = %v, want ErrNoServers", err)
+	}
+}
