@@ -22,16 +22,17 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -46,7 +47,14 @@ func TestLocalhost(t *testing.T) {
 	if err != nil {
 		t.Skipf("skipping test; no server running at %s", localhostTCPAddr)
 	}
+	// Wait for the "OK" reply to make sure the server has processed the
+	// flush before the test starts. Otherwise the flush can race with (and
+	// clobber) the first Set below, as memcached's flush granularity is
+	// one second.
 	io.WriteString(c, "flush_all\r\n")
+	if _, err := bufio.NewReader(c).ReadString('\n'); err != nil {
+		t.Fatalf("reading flush_all response: %v", err)
+	}
 	c.Close()
 
 	testWithClient(t, New(localhostTCPAddr))
@@ -395,33 +403,60 @@ func testTouchWithClient(t *testing.T, c *Client) {
 	}
 }
 
-func BenchmarkOnItem(b *testing.B) {
-	fakeServer, err := net.Listen("tcp", "localhost:0")
+// BenchmarkSet measures the overhead of the command path against a local
+// in-process testServer, exercising the full encode/pipeline/decode loop.
+func BenchmarkSet(b *testing.B) {
+	ln, err := net.Listen("tcp", "localhost:0")
 	if err != nil {
-		b.Fatal("Could not open fake server: ", err)
+		b.Fatal("Could not open listener: ", err)
 	}
-	defer fakeServer.Close()
-	go func() {
-		for {
-			if c, err := fakeServer.Accept(); err == nil {
-				go func() { io.Copy(ioutil.Discard, c) }()
-			} else {
-				return
-			}
-		}
-	}()
+	defer ln.Close()
+	srv := &testServer{}
+	go srv.Serve(ln)
 
-	addr := fakeServer.Addr()
-	c := New(addr.String())
-	if _, err := c.getConn(addr); err != nil {
-		b.Fatal("failed to initialize connection to fake server")
-	}
+	c := New(ln.Addr().String())
+	defer c.Close()
 
-	item := Item{Key: "foo"}
-	dummyFn := func(_ *Client, _ *bufio.ReadWriter, _ *Item) error { return nil }
+	item := &Item{Key: "foo", Value: []byte("bar")}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		c.onItem(&item, dummyFn)
+		if err := c.Set(item); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// TestAddrBackendKeyAllocs guards the hot-path map-key extraction against
+// regressions that introduce allocations (e.g. re-adding addr.String() for a
+// case handled by a type switch).
+func TestAddrBackendKeyAllocs(t *testing.T) {
+	tcp, err := net.ResolveTCPAddr("tcp", "127.0.0.1:11211")
+	if err != nil {
+		t.Fatal(err)
+	}
+	unix, err := net.ResolveUnixAddr("unix", "/tmp/gomemcache.sock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	static := newStaticAddr(tcp) // what ServerList produces
+
+	cases := []struct {
+		name string
+		addr net.Addr
+	}{
+		{"TCPAddr", tcp},
+		{"staticAddr", static},
+		{"UnixAddr", unix},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := testing.AllocsPerRun(1000, func() {
+				_ = addrBackendKey(tc.addr)
+			})
+			if got != 0 {
+				t.Errorf("addrBackendKey(%T) allocs = %v; want 0", tc.addr, got)
+			}
+		})
 	}
 }
 
@@ -432,6 +467,154 @@ func BenchmarkScanGetResponseLine(b *testing.B) {
 		_, err := scanGetResponseLine(line, &it)
 		if err != nil {
 			b.Fatal(err)
+		}
+	}
+}
+
+func TestProtocolErrorClassification(t *testing.T) {
+	tests := []struct {
+		line          string
+		wantErr       bool
+		wantResumable bool
+		wantSubstr    string
+	}{
+		{line: "STORED\r\n"},
+		{line: "END\r\n"},
+		{line: "SERVER_ERROR out of memory storing object\r\n",
+			wantErr: true, wantResumable: true, wantSubstr: "server error: out of memory storing object"},
+		{line: "CLIENT_ERROR bad data chunk\r\n",
+			wantErr: true, wantSubstr: "client error: bad data chunk"},
+		{line: "ERROR\r\n",
+			wantErr: true, wantSubstr: "ERROR"},
+	}
+	for _, tt := range tests {
+		err := protocolError([]byte(tt.line))
+		if !tt.wantErr {
+			if err != nil {
+				t.Errorf("protocolError(%q) = %v; want nil", tt.line, err)
+			}
+			continue
+		}
+		if err == nil {
+			t.Errorf("protocolError(%q) = nil; want error", tt.line)
+			continue
+		}
+		if !strings.Contains(err.Error(), tt.wantSubstr) {
+			t.Errorf("protocolError(%q) = %q; want substring %q", tt.line, err, tt.wantSubstr)
+		}
+		if got := resumableError(err); got != tt.wantResumable {
+			t.Errorf("resumableError(protocolError(%q)) = %v; want %v", tt.line, got, tt.wantResumable)
+		}
+	}
+
+	err := protocolError([]byte("SERVER_ERROR boom\r\n"))
+	if !errors.Is(err, ErrServerError) {
+		t.Errorf("errors.Is(%v, ErrServerError) = false; want true", err)
+	}
+	var se *ServerError
+	if !errors.As(err, &se) || se.Message != "boom" {
+		t.Errorf("errors.As(%v, *ServerError) failed or wrong Message", err)
+	}
+}
+
+// serveProtocolErrors is a gets-only test server. The keys "se", "ce", and
+// "err" provoke SERVER_ERROR, CLIENT_ERROR, and ERROR replies respectively;
+// any other key returns a canned value.
+func serveProtocolErrors(ln net.Listener) {
+	for {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		go func(c net.Conn) {
+			defer c.Close()
+			br := bufio.NewReader(c)
+			bw := bufio.NewWriter(c)
+			for {
+				line, err := br.ReadString('\n')
+				if err != nil {
+					return
+				}
+				key := strings.TrimSuffix(strings.TrimPrefix(line, "gets "), "\r\n")
+				switch key {
+				case "se":
+					io.WriteString(bw, "SERVER_ERROR object too large for cache\r\n")
+				case "ce":
+					io.WriteString(bw, "CLIENT_ERROR bad data chunk\r\n")
+				case "err":
+					io.WriteString(bw, "ERROR\r\n")
+				default:
+					fmt.Fprintf(bw, "VALUE %s 0 %d\r\nval-%s\r\nEND\r\n", key, len("val-"+key), key)
+				}
+				if bw.Flush() != nil {
+					return
+				}
+			}
+		}(c)
+	}
+}
+
+// TestProtocolErrorConnHandling verifies that a SERVER_ERROR reply fails only
+// the request that provoked it (the connection is reused afterwards), while
+// ERROR and CLIENT_ERROR replies cause the connection to be closed and a new
+// one to be dialed for subsequent requests.
+func TestProtocolErrorConnHandling(t *testing.T) {
+	t.Parallel()
+	ln, err := net.Listen("tcp", "localhost:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+	go serveProtocolErrors(ln)
+
+	var dials int32
+	c := New(ln.Addr().String())
+	defer c.Close()
+	c.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		atomic.AddInt32(&dials, 1)
+		var d net.Dialer
+		return d.DialContext(ctx, network, address)
+	}
+
+	get := func(key string) error {
+		t.Helper()
+		it, err := c.Get(key)
+		if err == nil && string(it.Value) != "val-"+key {
+			t.Fatalf("Get(%q) = %q; want %q", key, it.Value, "val-"+key)
+		}
+		return err
+	}
+
+	if err := get("a"); err != nil {
+		t.Fatalf("Get(a): %v", err)
+	}
+
+	err = get("se")
+	if !errors.Is(err, ErrServerError) {
+		t.Fatalf("Get(se) error = %v; want ErrServerError", err)
+	}
+	var se *ServerError
+	if !errors.As(err, &se) || se.Message != "object too large for cache" {
+		t.Fatalf("Get(se) error = %#v; want *ServerError with the server's message", err)
+	}
+	if err := get("b"); err != nil {
+		t.Fatalf("Get(b) after SERVER_ERROR: %v", err)
+	}
+	if n := atomic.LoadInt32(&dials); n != 1 {
+		t.Errorf("dials after SERVER_ERROR = %d; want 1 (conn should have been reused)", n)
+	}
+
+	for _, key := range []string{"ce", "err"} {
+		before := atomic.LoadInt32(&dials)
+		err := get(key)
+		if err == nil || errors.Is(err, ErrServerError) {
+			t.Fatalf("Get(%q) error = %v; want a non-ServerError error", key, err)
+		}
+		if err := get("ok-after-" + key); err != nil {
+			t.Fatalf("Get after %q: %v", key, err)
+		}
+		if after := atomic.LoadInt32(&dials); after <= before {
+			t.Errorf("dials after %q = %d; want > %d (conn should have been closed)", key, after, before)
 		}
 	}
 }

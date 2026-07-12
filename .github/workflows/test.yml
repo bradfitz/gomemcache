@@ -4,22 +4,42 @@ on:
   pull_request:
 
 jobs:
-  build:
-
+  # Verify the library still builds with Go 1.18. GOTOOLCHAIN=local prevents
+  # auto-upgrade; Go 1.18 itself predates the toolchain directive anyway, so
+  # it ignores go.mod's "go 1.26" line and just tries to compile. This job
+  # catches accidental use of post-1.18 language/stdlib features.
+  # Go 1.18 is super old, but is new enough to have generics.
+  # TODO(bradfitz): decide on an actual support Go version policy. It'd be nice
+  # to depend on newer Go.
+  build-go118:
+    name: Test on old Go 1.18
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        go-version: [ '1.18', '1.21' ]
-
     steps:
       - name: install memcached
         run: |
-          sudo apt update
-          sudo apt install memcached
-      - uses: actions/checkout@v3
-      - name: Setup Go ${{ matrix.go-version }}
-        uses: actions/setup-go@v4
+          sudo apt-get update
+          sudo apt-get install -y memcached
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
         with:
-          go-version: ${{ matrix.go-version }}
-      - name: Test
-        run: go test -v ./...
+          go-version: '1.18'
+      - name: go test
+        env:
+          GOTOOLCHAIN: local
+        run: go test ./...
+
+  # Full test suite on modern Go, including the synctest-gated pipeline tests.
+  test:
+    name: Run Go tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: install memcached
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y memcached
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+      - name: go test
+        run: go test -v -race ./...
