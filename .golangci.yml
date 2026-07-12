@@ -1,0 +1,29 @@
+version: "2"
+run:
+  timeout: 15m
+output:
+  show-stats: false
+
+formatters:
+  enable:
+    - gci
+    - gofumpt
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+    gofumpt:
+      extra-rules: true
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+linters:
+  # Keep this list sorted alphabetically
+  disable:
+    # TODO: Cleanup errcheck issues.
+    - errcheck
+  enable:
+    - revive
