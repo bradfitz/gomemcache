@@ -504,7 +504,41 @@ func TestScanGetResponseLine(t *testing.T) {
 	}
 }
 
-func TestServerError_ReturnsErrServerError(t *testing.T) {
+func TestServerError_KeepsConnectionOpen(t *testing.T) {
+	// countFreeConns returns the number of connections in the client's free pool.
+	countFreeConns := func(c *Client) int {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		return len(c.freeconn[dummyAddr{}.String()])
+	}
+
+	// assertReusable verifies that the connection went back to the free pool and
+	// that a subsequent request over the very same connection still works.
+	assertReusable := func(t *testing.T, c *Client, srvw io.Writer, srvReqs <-chan string) {
+		t.Helper()
+
+		if got := countFreeConns(c); got != 1 {
+			t.Fatalf("free conns after SERVER_ERROR: got %d, want 1", got)
+		}
+
+		errCh := make(chan error)
+		go func() {
+			_, err := c.Get("foo")
+			errCh <- err
+		}()
+
+		if req := <-srvReqs; req != "gets foo\r\n" {
+			t.Fatalf("unexpected follow-up request: %q", req)
+		}
+		if _, err := io.WriteString(srvw, "END\r\n"); err != nil {
+			t.Fatalf("write follow-up response: %v", err)
+		}
+
+		if err := <-errCh; !errors.Is(err, ErrCacheMiss) {
+			t.Fatalf("follow-up Get on reused connection: got err=%v, want ErrCacheMiss", err)
+		}
+	}
+
 	t.Run("Set", func(t *testing.T) {
 		c, srvw, srvReqs := getClientWithFakeServer(t)
 
@@ -528,6 +562,8 @@ func TestServerError_ReturnsErrServerError(t *testing.T) {
 		if want := "memcache: server error: object too large for cache"; err.Error() != want {
 			t.Fatalf("Set: got err=%q, want %q", err.Error(), want)
 		}
+
+		assertReusable(t, c, srvw, srvReqs)
 	})
 
 	t.Run("Get", func(t *testing.T) {
@@ -549,6 +585,8 @@ func TestServerError_ReturnsErrServerError(t *testing.T) {
 		if err := <-errCh; !errors.Is(err, ErrServerError) {
 			t.Fatalf("Get: got err=%v, want ErrServerError", err)
 		}
+
+		assertReusable(t, c, srvw, srvReqs)
 	})
 
 	t.Run("Delete", func(t *testing.T) {
@@ -569,6 +607,8 @@ func TestServerError_ReturnsErrServerError(t *testing.T) {
 		if err := <-errCh; !errors.Is(err, ErrServerError) {
 			t.Fatalf("Delete: got err=%v, want ErrServerError", err)
 		}
+
+		assertReusable(t, c, srvw, srvReqs)
 	})
 
 	t.Run("Increment", func(t *testing.T) {
@@ -589,6 +629,31 @@ func TestServerError_ReturnsErrServerError(t *testing.T) {
 
 		if err := <-errCh; !errors.Is(err, ErrServerError) {
 			t.Fatalf("Increment: got err=%v, want ErrServerError", err)
+		}
+
+		assertReusable(t, c, srvw, srvReqs)
+	})
+
+	t.Run("non-protocol errors still close the connection", func(t *testing.T) {
+		c, srvw, srvReqs := getClientWithFakeServer(t)
+
+		errCh := make(chan error)
+		go func() {
+			errCh <- c.Set(&Item{Key: "foo", Value: []byte("hello")})
+		}()
+
+		<-srvReqs // command line
+		<-srvReqs // data block
+		if _, err := io.WriteString(srvw, "BOGUS RESPONSE\r\n"); err != nil {
+			t.Fatalf("write response: %v", err)
+		}
+
+		err := <-errCh
+		if err == nil || errors.Is(err, ErrServerError) {
+			t.Fatalf("Set: got err=%v, want a non-ErrServerError error", err)
+		}
+		if got := countFreeConns(c); got != 0 {
+			t.Fatalf("free conns after unexpected response: got %d, want 0", got)
 		}
 	})
 }
