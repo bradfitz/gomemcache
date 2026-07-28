@@ -87,6 +87,16 @@ func resumableError(err error) bool {
 	return false
 }
 
+// serverErrorFromLine returns an error wrapping ErrServerError if line is a
+// SERVER_ERROR response, or nil otherwise.
+func serverErrorFromLine(line []byte) error {
+	if !bytes.HasPrefix(line, resultServerErrorPrefix) {
+		return nil
+	}
+	msg := bytes.TrimSuffix(line[len(resultServerErrorPrefix):], crlf)
+	return fmt.Errorf("%w: %s", ErrServerError, msg)
+}
+
 func legalKey(key string) bool {
 	if len(key) > 250 {
 		return false
@@ -113,6 +123,7 @@ var (
 	resultTouched   = []byte("TOUCHED\r\n")
 
 	resultClientErrorPrefix = []byte("CLIENT_ERROR ")
+	resultServerErrorPrefix = []byte("SERVER_ERROR ")
 	versionPrefix           = []byte("VERSION")
 )
 
@@ -464,6 +475,9 @@ func (c *Client) touchFromAddr(addr net.Addr, keys []string, expiration int32) e
 			case bytes.Equal(line, resultNotFound):
 				return ErrCacheMiss
 			default:
+				if err := serverErrorFromLine(line); err != nil {
+					return err
+				}
 				return fmt.Errorf("memcache: unexpected response line from touch: %q", string(line))
 			}
 		}
@@ -530,6 +544,11 @@ func parseGetResponse(r *bufio.Reader, conn *conn, cb func(*Item)) error {
 		it := new(Item)
 		size, err := scanGetResponseLine(line, it)
 		if err != nil {
+			// The line is not a VALUE line: check whether it's a protocol-level
+			// server error before reporting it as unexpected.
+			if serverErr := serverErrorFromLine(line); serverErr != nil {
+				return serverErr
+			}
 			return err
 		}
 		it.Value = make([]byte, size+2)
@@ -699,6 +718,10 @@ func (c *Client) populateOne(rw *bufio.ReadWriter, verb string, item *Item) erro
 		return ErrCASConflict
 	case bytes.Equal(line, resultNotFound):
 		return ErrCacheMiss
+	default:
+		if err := serverErrorFromLine(line); err != nil {
+			return err
+		}
 	}
 	return fmt.Errorf("memcache: unexpected response line from %q: %q", verb, string(line))
 }
@@ -731,6 +754,10 @@ func writeExpectf(rw *bufio.ReadWriter, expect []byte, format string, args ...in
 		return ErrCASConflict
 	case bytes.Equal(line, resultNotFound):
 		return ErrCacheMiss
+	default:
+		if err := serverErrorFromLine(line); err != nil {
+			return err
+		}
 	}
 	return fmt.Errorf("memcache: unexpected response line: %q", string(line))
 }
@@ -817,6 +844,8 @@ func (c *Client) incrDecr(verb, key string, delta uint64) (uint64, error) {
 		case bytes.HasPrefix(line, resultClientErrorPrefix):
 			errMsg := line[len(resultClientErrorPrefix) : len(line)-2]
 			return errors.New("memcache: client error: " + string(errMsg))
+		case bytes.HasPrefix(line, resultServerErrorPrefix):
+			return serverErrorFromLine(line)
 		}
 		val, err = strconv.ParseUint(string(line[:len(line)-2]), 10, 64)
 		if err != nil {

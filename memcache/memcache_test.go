@@ -22,6 +22,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -501,4 +502,135 @@ func TestScanGetResponseLine(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestServerError_ReturnsErrServerError(t *testing.T) {
+	t.Run("Set", func(t *testing.T) {
+		c, srvw, srvReqs := getClientWithFakeServer(t)
+
+		errCh := make(chan error)
+		go func() {
+			errCh <- c.Set(&Item{Key: "foo", Value: []byte("hello")})
+		}()
+
+		if req := <-srvReqs; req != "set foo 0 0 5\r\n" {
+			t.Fatalf("unexpected request: %q", req)
+		}
+		<-srvReqs // data block
+		if _, err := io.WriteString(srvw, "SERVER_ERROR object too large for cache\r\n"); err != nil {
+			t.Fatalf("write response: %v", err)
+		}
+
+		err := <-errCh
+		if !errors.Is(err, ErrServerError) {
+			t.Fatalf("Set: got err=%v, want ErrServerError", err)
+		}
+		if want := "memcache: server error: object too large for cache"; err.Error() != want {
+			t.Fatalf("Set: got err=%q, want %q", err.Error(), want)
+		}
+	})
+
+	t.Run("Get", func(t *testing.T) {
+		c, srvw, srvReqs := getClientWithFakeServer(t)
+
+		errCh := make(chan error)
+		go func() {
+			_, err := c.Get("foo")
+			errCh <- err
+		}()
+
+		if req := <-srvReqs; req != "gets foo\r\n" {
+			t.Fatalf("unexpected request: %q", req)
+		}
+		if _, err := io.WriteString(srvw, "SERVER_ERROR out of memory writing get response\r\n"); err != nil {
+			t.Fatalf("write response: %v", err)
+		}
+
+		if err := <-errCh; !errors.Is(err, ErrServerError) {
+			t.Fatalf("Get: got err=%v, want ErrServerError", err)
+		}
+	})
+
+	t.Run("Delete", func(t *testing.T) {
+		c, srvw, srvReqs := getClientWithFakeServer(t)
+
+		errCh := make(chan error)
+		go func() {
+			errCh <- c.Delete("foo")
+		}()
+
+		if req := <-srvReqs; req != "delete foo\r\n" {
+			t.Fatalf("unexpected request: %q", req)
+		}
+		if _, err := io.WriteString(srvw, "SERVER_ERROR temporary failure\r\n"); err != nil {
+			t.Fatalf("write response: %v", err)
+		}
+
+		if err := <-errCh; !errors.Is(err, ErrServerError) {
+			t.Fatalf("Delete: got err=%v, want ErrServerError", err)
+		}
+	})
+
+	t.Run("Increment", func(t *testing.T) {
+		c, srvw, srvReqs := getClientWithFakeServer(t)
+
+		errCh := make(chan error)
+		go func() {
+			_, err := c.Increment("foo", 1)
+			errCh <- err
+		}()
+
+		if req := <-srvReqs; req != "incr foo 1\r\n" {
+			t.Fatalf("unexpected request: %q", req)
+		}
+		if _, err := io.WriteString(srvw, "SERVER_ERROR temporary failure\r\n"); err != nil {
+			t.Fatalf("write response: %v", err)
+		}
+
+		if err := <-errCh; !errors.Is(err, ErrServerError) {
+			t.Fatalf("Increment: got err=%v, want ErrServerError", err)
+		}
+	})
+}
+
+// getClientWithFakeServer creates a new client, whose dial function is bound to an in-memory synchronous server.
+func getClientWithFakeServer(t *testing.T) (*Client, io.Writer, <-chan string) {
+	cliConn, srvConn := net.Pipe()
+	t.Cleanup(func() {
+		_ = srvConn.Close()
+		_ = cliConn.Close()
+	})
+
+	c := NewFromSelector(dummySelector{})
+	c.DialContext = func(context.Context, string, string) (net.Conn, error) {
+		return cliConn, nil
+	}
+
+	srvReqs := make(chan string)
+	go func() {
+		br := bufio.NewReader(srvConn)
+		for {
+			// ignores error for simplicity
+			line, _ := br.ReadSlice('\n')
+			srvReqs <- string(line)
+		}
+	}()
+
+	return c, srvConn, srvReqs
+}
+
+type dummyAddr struct{}
+
+func (dummyAddr) Network() string { return "dummy" }
+
+func (dummyAddr) String() string { return "dummy" }
+
+type dummySelector struct{}
+
+func (dummySelector) PickServer(string) (net.Addr, error) {
+	return dummyAddr{}, nil
+}
+
+func (dummySelector) Each(f func(net.Addr) error) error {
+	return f(dummyAddr{})
 }
