@@ -199,6 +199,10 @@ func testWithClient(t *testing.T, c *Client) {
 	if err := c.CompareAndSwap(it0); err != ErrCASConflict {
 		t.Fatalf("cas(foo) error = %v; want ErrCASConflict", err)
 	}
+	it = &Item{Key: "nonexistent", CasID: 123456789, Expiration: 1}
+	if err := c.CompareAndSwap(it); err != ErrCacheMiss {
+		t.Fatalf("cas(nonexistent) error = %v; want ErrCacheMiss", err)
+	}
 
 	// Get
 	it, err = c.Get("foo")
