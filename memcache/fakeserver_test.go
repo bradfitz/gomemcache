@@ -213,7 +213,7 @@ func (c *testConn) handleRequestLine(line string) bool {
 			return reply("STORED")
 		case "cas":
 			if !ok {
-				reply("NOT_FOUND")
+				return reply("NOT_FOUND")
 			}
 			if casUniq != fmt.Sprint(was.casUniq) {
 				return reply("EXISTS")

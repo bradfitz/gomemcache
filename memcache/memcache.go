@@ -36,17 +36,18 @@ import (
 // https://godoc.org/google.golang.org/appengine/memcache
 
 var (
-	// ErrCacheMiss means that a Get failed because the item wasn't present.
+	// ErrCacheMiss means that a Get or CompareAndSwap failed because
+	// the item wasn't present.
 	ErrCacheMiss = errors.New("memcache: cache miss")
 
 	// ErrCASConflict means that a CompareAndSwap call failed due to the
 	// cached value being modified between the Get and the CompareAndSwap.
 	// If the cached value was simply evicted rather than replaced,
-	// ErrNotStored will be returned instead.
+	// ErrCacheMiss will be returned instead.
 	ErrCASConflict = errors.New("memcache: compare-and-swap conflict")
 
-	// ErrNotStored means that a conditional write operation (i.e. Add or
-	// CompareAndSwap) failed because the condition was not satisfied.
+	// ErrNotStored means that a conditional write operation (i.e. Add)
+	// failed because the condition was not satisfied.
 	ErrNotStored = errors.New("memcache: item not stored")
 
 	// ErrServer means that a server error occurred.
@@ -652,7 +653,7 @@ func (c *Client) prepend(rw *bufio.ReadWriter, item *Item) error {
 // Get and the CompareAndSwap calls. The item's Key should not change
 // between calls but all other item fields may differ. ErrCASConflict
 // is returned if the value was modified in between the
-// calls. ErrNotStored is returned if the value was evicted in between
+// calls. ErrCacheMiss is returned if the value was evicted in between
 // the calls.
 func (c *Client) CompareAndSwap(item *Item) error {
 	return c.onItem(item, (*Client).cas)
